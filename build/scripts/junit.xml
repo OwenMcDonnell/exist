@@ -51,7 +51,7 @@
             
         <javac includeAntRuntime="false" debug="${build.debug}" deprecation="${build.deprecation}"
             destdir="${junit.reports}/classes" encoding="UTF-8"
-            optimize="${build.optimize}" srcdir="${junit.reports}/src"
+            optimize="${build.optimize}" srcdir="${junit.reports}/java"
             source="${build.compiler.source}" target="${build.compiler.target}">
             <classpath>
                 <path refid="classpath.core"/>
@@ -60,11 +60,11 @@
             </classpath>
         </javac>
         <copy todir="${junit.reports}/classes/org/exist/performance/ant"
-              file="${junit.reports}/src/org/exist/performance/ant/antlib.xml"/>
+              file="${junit.reports}/resources/org/exist/performance/ant/antlib.xml"/>
         <copy todir="${junit.reports}/classes/org/exist/performance"
-            file="${junit.reports}/src/org/exist/performance/log2html.xql"/>
+            file="${junit.reports}/resources/org/exist/performance/log2html.xql"/>
         <copy todir="${junit.reports}/classes/org/exist/config/mapping"
-            file="${junit.reports}/src/org/exist/config/mapping/Mapping.xml"/>
+            file="${junit.reports}/resources/org/exist/config/mapping/Mapping.xml"/>
        <!-- <ant antfile="build.xml" dir="extensions/indexes" target="compile-tests"/>
         <ant antfile="build.xml" dir="extensions/xqdoc" target="compile-tests"/>
         <ant antfile="build.xml" dir="extensions/xslt" target="compile-tests"/>  -->
@@ -144,7 +144,7 @@
 
             <!-- Execute all other tests except those that have to be called manually.   -->
             <batchtest fork="yes" todir="${junit.reports.dat}">
-                <fileset dir="${junit.reports}/src">
+                <fileset dir="${junit.reports}/java">
                     <include name="**/*Test.java"/>
                     <include name="org/exist/*/*Test.java"/>
                     <exclude name="**/concurrent/**/*.java"/>
@@ -191,7 +191,7 @@
             <formatter type="xml"/>
 
             <batchtest fork="yes" todir="${junit.reports.dat}">
-                <fileset dir="${junit.reports}/src">
+                <fileset dir="${junit.reports}/java">
                     <include name="org/exist/soap/*Test.java"/>
                 </fileset>
             </batchtest>
@@ -384,14 +384,14 @@
         <unzip src="${junit.reports}/external/XQTS_1_0_3.zip" dest="${junit.reports}/external/XQTS_1_0_3"/>
     </target>
 
-    <available file="${junit.reports}/src/org/exist/xquery/xqts/XQTS_1_0_3" property="xqts_junit.present"/>
+    <available file="${junit.reports}/java/org/exist/xquery/xqts/XQTS_1_0_3" property="xqts_junit.present"/>
 
     <target name="prepare-xqts" depends="download-xqts" unless="xqts_junit.present">
         <echo message="---------------------------------------"/>
         <echo message="Generating junit tests from XQTS ......"/>
         <echo message="---------------------------------------"/>
         <delete failonerror="false">
-            <fileset dir="${junit.reports}/src/org/exist/xquery/xqts/" excludes="XQTS_case.java,XQTS_To_junit.java,QT3TS_case.java,QT3TS_To_junit.java"/>
+            <fileset dir="${junit.reports}/java/org/exist/xquery/xqts/" excludes="XQTS_case.java,XQTS_To_junit.java,QT3TS_case.java,QT3TS_To_junit.java"/>
         </delete>
     	<!-- workaround include bug -->
     	<copy todir="${basedir}/cat">
@@ -435,7 +435,7 @@
     <target name="prepare-xslts" depends="download-xslts"> <!-- unless="xslts_junit.present" -->
         <!--
             <delete>
-            <fileset dir="${junit.reports}/src/org/exist/xsl/xslts/"/>
+            <fileset dir="${junit.reports}/java/org/exist/xsl/xslts/"/>
             </delete>
         -->
         
@@ -544,7 +544,7 @@
         <unzip src="${junit.reports}/external/QT3-test-suite-121020.zip" dest="${junit.reports}/external"/>
     </target>
 
-    <available file="${junit.reports}/src/org/exist/xquery/xqts/qt3" property="qt3_junit.present"/>
+    <available file="${junit.reports}/java/org/exist/xquery/xqts/qt3" property="qt3_junit.present"/>
     
     <target name="prepare-qt3" depends="download-qt3" unless="qt3_junit.present">
 
@@ -585,7 +585,7 @@
             <formatter type="xml"/>
 
             <batchtest fork="yes" todir="${junit.reports.dat}">
-                <fileset dir="${junit.reports}/src">
+                <fileset dir="${junit.reports}/java">
                     <include name="org/exist/xquery/xqts/qt3/**/*.java"/>
                 </fileset>
             </batchtest>
