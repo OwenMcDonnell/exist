@@ -13,7 +13,7 @@
 	<import file="../../build.xml"/>	
 
     <property name="benchmark.output" value="${junit.reports}/benchmark"/>
-    <property name="benchmark.src" value="test/src"/>
+    <property name="benchmark.resources" value="src/test/resources"/>
     <property name="benchmark.data" value="${benchmark.output}/data"/>
 
     <available property="benchmark.jgoethe.available"
@@ -24,7 +24,7 @@
         file="01_Content.imdi" filepath="${benchmark.data}/imdi"/>
 
     <path id="aspectj">
-        <pathelement path="${tools.aspectj}/lib/aspectjrt-1.6.12.jar"/>
+        <pathelement path="${tools.aspectj}/lib/aspectjrt-1.7.1.jar"/>
     </path>
     
     <target name="benchmark" depends="run-benchmark"/>
@@ -33,7 +33,7 @@
         <delete dir="${benchmark.output}/temp" failonerror="false"/>
         <mkdir dir="${benchmark.output}"/>
         <mkdir dir="${benchmark.output}/temp"/>
-        <echo message="Running test file: ${benchmark.src}/org/exist/performance/test.xml"/>
+        <echo message="Running test file: ${benchmark.resources}/org/exist/performance/test.xml"/>
 	    <java fork="true" classname="org.exist.performance.Main"
             maxmemory="2048m">
 	        <sysproperty key="exist.home" value="${basedir}" />
@@ -42,7 +42,7 @@
 	        <classpath refid="classpath.junit"/>
 	        <classpath refid="aspectj"/>
             <arg value="-d ${benchmark.output}"/>
-	        <arg value="-f ${benchmark.src}/org/exist/performance/test.xml"/>
+	        <arg value="-f ${benchmark.resources}/org/exist/performance/test.xml"/>
 	        <arg value="-r"/>
 	        <arg value="bibliographic-tests"/>
 	        <arg value="ft-tests"/>

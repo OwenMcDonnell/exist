@@ -16,7 +16,7 @@
         <mkdir dir="${build.soap}"/>
         <delete failonerror="no" file="${build.soap}/org/exist/soap/AdminSoapBindingImpl.java"/>
         <delete failonerror="no" file="${build.soap}/org/exist/soap/QuerySoapBindingImpl.java"/>
-        <wsdl2java url="${src}/org/exist/soap/query.wsdl"
+        <wsdl2java url="${main.resources}/org/exist/soap/query.wsdl"
                 output="${build.soap}"
                 deployscope="session"
                 serverSide="yes"
@@ -25,7 +25,7 @@
                 wrapArrays="yes">
             <mapping namespace="urn:exist" package="org.exist.soap"/>
         </wsdl2java>
-        <copy todir="${src}/org/exist/soap">
+        <copy todir="${main.java}/org/exist/soap">
             <fileset dir="${build.soap}/org/exist/soap">
                 <include name="QueryService.java"/>
                 <include name="QueryServiceLocator.java"/>
@@ -41,9 +41,9 @@
                 <include name="Base64BinaryArray.java"/>
             </fileset>
         </copy>
-        <copy file="${build.soap}/org/exist/soap/deploy.wsdd" tofile="${src}/org/exist/soap/deployQuery.wsdd"/>
-        <copy file="${build.soap}/org/exist/soap/undeploy.wsdd" tofile="${src}/org/exist/soap/undeployQuery.wsdd"/>
-        <wsdl2java url="${src}/org/exist/soap/admin.wsdl"
+        <copy file="${build.soap}/org/exist/soap/deploy.wsdd" tofile="${main.resources}/org/exist/soap/deployQuery.wsdd"/>
+        <copy file="${build.soap}/org/exist/soap/undeploy.wsdd" tofile="${main.resources}/org/exist/soap/undeployQuery.wsdd"/>
+        <wsdl2java url="${main.resources}/org/exist/soap/admin.wsdl"
                 output="${build.soap}"
                 deployscope="session"
                 serverSide="yes"
@@ -52,7 +52,7 @@
                 wrapArrays="yes">
             <mapping namespace="urn:exist" package="org.exist.soap"/>
         </wsdl2java>
-        <copy todir="${src}/org/exist/soap">
+        <copy todir="${main.java}/org/exist/soap">
             <fileset dir="${build.soap}/org/exist/soap">
                 <include name="AdminService.java"/>
                 <include name="AdminServiceLocator.java"/>
@@ -72,20 +72,20 @@
                 <include name="UserDescs.java"/>
             </fileset>
         </copy>
-        <copy file="${build.soap}/org/exist/soap/deploy.wsdd" tofile="${src}/org/exist/soap/deployAdmin.wsdd"/>
-        <copy file="${build.soap}/org/exist/soap/undeploy.wsdd" tofile="${src}/org/exist/soap/undeployAdmin.wsdd"/>
+        <copy file="${build.soap}/org/exist/soap/deploy.wsdd" tofile="${main.resources}/org/exist/soap/deployAdmin.wsdd"/>
+        <copy file="${build.soap}/org/exist/soap/undeploy.wsdd" tofile="${main.resources}/org/exist/soap/undeployAdmin.wsdd"/>
     </target>
 
     <target depends="jar" name="java2wsdl">
         <java2wsdl classname="org.exist.soap.Query"
                 location="http://localhost:8080/exist/services/Query"
-                output="${src}/org/exist/soap/query.wsdl"
+                output="${main.resources}/org/exist/soap/query.wsdl"
                 namespace="urn:exist">
             <mapping namespace="urn:exist" package="org.exist.soap"/>
         </java2wsdl>
         <java2wsdl classname="org.exist.soap.Admin"
                 location="http://localhost:8080/exist/services/Admin"
-                output="${src}/org/exist/soap/admin.wsdl"
+                output="${main.resources}/org/exist/soap/admin.wsdl"
                 namespace="urn:exist">
             <mapping namespace="urn:exist" package="org.exist.soap"/>
         </java2wsdl>
@@ -94,12 +94,12 @@
     <target depends="compile" name="deploy">
         <java classname="org.apache.axis.client.AdminClient" fork="false">
             <arg value="-lhttp://localhost:8080/exist/services/QueryService"/>
-            <arg value="${src}/org/exist/soap/deployQuery.wsdd"/>
+            <arg value="${main.resources}/org/exist/soap/deployQuery.wsdd"/>
             <classpath refid="classpath.core"/>
         </java>
         <java classname="org.apache.axis.client.AdminClient" fork="false">
             <arg value="-lhttp://localhost:8080/exist/services/AdminService"/>
-            <arg value="${src}/org/exist/soap/deployAdmin.wsdd"/>
+            <arg value="${main.resources}/org/exist/soap/deployAdmin.wsdd"/>
             <classpath refid="classpath.core"/>
         </java>
     </target>
@@ -107,7 +107,7 @@
     <target depends="compile" name="undeploy">
         <java classname="org.apache.axis.client.AdminClient" fork="false">
             <arg value="-lhttp://localhost:8080/exist/services/QueryService"/>
-            <arg value="${src}/org/exist/soap/undeployQuery.wsdd"/>
+            <arg value="${main.resources}/org/exist/soap/undeployQuery.wsdd"/>
             <classpath refid="classpath.core"/>
         </java>
     </target>

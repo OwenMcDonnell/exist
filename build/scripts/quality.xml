@@ -114,7 +114,7 @@
             <formatter type="html" toFile="test/pmd/report.html"/>
             <formatter type="xml"  toFile="test/pmd/report.xml" />
             
-            <fileset dir="src">
+            <fileset dir="src/main/java">
                 <include name="**/*.java" />
                 <exclude name="**/parser/*.java" />
             </fileset>
