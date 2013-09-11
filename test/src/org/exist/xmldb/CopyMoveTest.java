@@ -46,6 +46,29 @@ public class CopyMoveTest {
         ResourceSet rs = xq.queryResource("duplicate", "/sample");
         assertEquals(1, rs.getSize());
     }
+
+    @Test
+    public void createCollectionWithoutReadPermOnDest() throws XMLDBException {
+        final String collectionURL = ROOT_URI + "/" + TEST_COLLECTION;
+        final String destCollectionA = "destA";
+        final String destCollectionAURL = collectionURL + "/" + destCollectionA;
+        final String destCollectionB = "destB";
+
+        //get collection & services
+        final CollectionImpl colTest = (CollectionImpl)DatabaseManager.getCollection(collectionURL);
+        final CollectionManagementServiceImpl service = (CollectionManagementServiceImpl) colTest.getService("CollectionManagementService", "1.0");
+
+        //create destination collection /a (without read permission on it for guest)
+        final CollectionImpl colA = (CollectionImpl)service.createCollection(destCollectionA);
+        final UserManagementService ums = (UserManagementService)DatabaseManager.getCollection(destCollectionAURL, GUEST_UID, GUEST_PWD).getService("UserManagementService", "1.0");
+        ums.chmod("-wx------");
+        final Account guestAccount = ums.getAccount(GUEST_UID);
+        ums.chown(guestAccount, guestAccount.getPrimaryGroup());
+
+        //create destination collection /a/b
+        final CollectionManagementServiceImpl serviceA = (CollectionManagementServiceImpl) colA.getService("CollectionManagementService", "1.0");
+        final CollectionImpl colB = (CollectionImpl)serviceA.createCollection(destCollectionB);
+    }
     
     @Test
     public void changePermissionsAfterCopy() throws XMLDBException {
