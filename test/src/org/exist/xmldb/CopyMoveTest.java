@@ -46,6 +46,35 @@ public class CopyMoveTest {
         ResourceSet rs = xq.queryResource("duplicate", "/sample");
         assertEquals(1, rs.getSize());
     }
+
+    @Test
+    public void copyResourceToCollectionWithoutReadPermOnDest() throws XMLDBException {
+        final String collectionURL = ROOT_URI + "/" + TEST_COLLECTION;
+        final String destCollection = "destTest";
+        final String destCollectionURL = collectionURL + "/" + destCollection;
+
+        final String srcResource = "src.xml";
+        final String destResource = "dest.xml";
+
+        //get collection & services
+        final CollectionImpl colSrc = (CollectionImpl)DatabaseManager.getCollection(collectionURL);
+        final CollectionManagementServiceImpl service = (CollectionManagementServiceImpl) colSrc.getService("CollectionManagementService", "1.0");
+
+        //create destination collection (without read permission on it for guest)
+        final CollectionImpl colDest = (CollectionImpl)service.createCollection(destCollection);
+        final UserManagementService ums = (UserManagementService)DatabaseManager.getCollection(destCollectionURL, GUEST_UID, GUEST_PWD).getService("UserManagementService", "1.0");
+        ums.chmod("-wx------");
+        final Account guestAccount = ums.getAccount(GUEST_UID);
+        ums.chown(guestAccount, guestAccount.getPrimaryGroup());
+
+        //store xml document
+        XMLResource original = (XMLResource) colSrc.createResource(srcResource, XMLResource.RESOURCE_TYPE);
+        original.setContent("<data/>");
+        colSrc.storeResource(original);
+
+        //copy to dest collection
+        service.copyResource(XmldbURI.create(collectionURL + "/" + srcResource), XmldbURI.create(destCollectionURL), XmldbURI.create(destResource));
+    }
     
     @Test
     public void changePermissionsAfterCopy() throws XMLDBException {
@@ -107,6 +136,7 @@ public class CopyMoveTest {
         CollectionManagementService cms = (CollectionManagementService) root.getService("CollectionManagementService", "1.0");
         Collection testCollection = cms.createCollection(TEST_COLLECTION);
         UserManagementService ums = (UserManagementService) testCollection.getService("UserManagementService", "1.0");
+
         // change ownership to guest
         Account guest = ums.getAccount(GUEST_UID);
         ums.chown(guest, guest.getPrimaryGroup());

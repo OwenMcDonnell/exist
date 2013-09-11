@@ -48,6 +48,7 @@ public class XmldbLocalTests {
     public final static String ADMIN_PWD = "";
 
     public final static String GUEST_UID = "guest";
+    public final static String GUEST_PWD = "guest";
 
     public static File getExistDir() {
         final String existHome = System.getProperty("exist.home");

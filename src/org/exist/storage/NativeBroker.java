@@ -2461,11 +2461,26 @@ public class NativeBroker extends DBBroker {
                 if(!destination.getPermissions().validate(getSubject(), Permission.EXECUTE)) {
                     throw new PermissionDeniedException("Account '" + getSubject().getName() + "' does not have execute access on the destination collection '" + destination.getURI() + "'.");
                 }
-             
-                if(destination.hasChildCollection(this, newName.lastSegment())) {
-                    throw new EXistException(
-                        "The collection '" + destination.getURI() + "' already has a sub-collection named '" + newName.lastSegment() + "', you cannot create a Document with the same name as an existing collection."
-                    );
+
+                final Subject currentUser = getSubject();
+                try {
+
+                    if(!destination.getPermissions().validate(getSubject(), Permission.READ)) {
+                        //we need to check something in the destination collection, if the user is
+                        //not allowed to read it, tempoarily become SYSTEM user
+                        setSubject(pool.getSecurityManager().getSystemSubject());
+                    }
+
+                    //check a collection does not exist in the destination with the same name as the resource we are trying to copy
+                    if(destination.hasChildCollection(this, newName.lastSegment())) {
+                        throw new EXistException(
+                                "The collection '" + destination.getURI() + "' already has a sub-collection named '" + newName.lastSegment() + "', you cannot create a Document with the same name as an existing collection."
+                        );
+                    }
+                } finally {
+                    if(currentUser.getId() != getSubject().getId()) {
+                        setSubject(currentUser);
+                    }
                 }
 
                 final XmldbURI newURI = destination.getURI().append(newName);
@@ -2506,7 +2521,7 @@ public class NativeBroker extends DBBroker {
                             {is.close();}
                     }
                 } else {
-                    DocumentImpl newDoc = new DocumentImpl(pool, destination, newName);
+                    final DocumentImpl newDoc = new DocumentImpl(pool, destination, newName);
                     newDoc.copyOf(doc);
                     newDoc.setDocId(getNextResourceId(transaction, destination));
                     //newDoc.setPermissions(doc.getPermissions());
@@ -2779,7 +2794,7 @@ public class NativeBroker extends DBBroker {
             LOG.debug("removing binary resource " + blob.getDocId() + "...");
         }
         
-        final File binFile = getCollectionFile(fsDir,blob.getURI(),false);
+        final File binFile = getCollectionFile(fsDir, blob.getURI(), false);
         if (binFile.exists()) {
             final File binBackupFile = getCollectionFile(fsBackupDir, transaction, blob.getURI(), true);
             final Loggable loggable = new RenameBinaryLoggable(this, transaction, binFile, binBackupFile);
@@ -2974,8 +2989,8 @@ public class NativeBroker extends DBBroker {
     @Override
     public void defragXMLResource(final Txn transaction, final DocumentImpl doc) {
         //TODO : use dedicated function in XmldbURI
-        LOG.debug("============> Defragmenting document " + 
-            doc.getCollection().getURI() + "/" + doc.getFileURI());
+        LOG.debug("============> Defragmenting document " +
+                doc.getCollection().getURI() + "/" + doc.getFileURI());
         final long start = System.currentTimeMillis();
         try {
             final long firstChild = doc.getFirstChildAddress();
