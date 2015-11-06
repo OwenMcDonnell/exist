@@ -910,6 +910,30 @@ function arr:lookupWildcard() {
         (every $prime in $actual satisfies $prime = $expected)
 };
 
+declare
+    %test:assertEquals(1, 3, 4, 5, 6)
+function arr:sort-int() {
+    array:sort([1, 4, 6, 5, 3])?*
+};
+
+declare
+    %test:assertEquals(1, -2, 5, 8, 10, -10, 10)
+function arr:sort-abs() {
+    array:sort([1, -2, 5, 10, -10, 10, 8], fn:abs#1)?*
+};
+
+declare
+    %test:assertEquals(1,0, 1,1, 0,1, 0,0)
+function arr:sort-seq() {
+    array:sort([(1,0), (1,1), (0,1), (0,0)])?*
+};
+
+declare
+    %test:assertEquals("b", "a", "c")
+function arr:sort-node() {
+    array:sort([<b/>, <a/>, <c/>])?* ! local-name(.)
+};
+
 (: Requires running server :)
 
 declare
