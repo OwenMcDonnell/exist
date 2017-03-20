@@ -26,6 +26,8 @@ import org.exist.xquery.util.*;
 import org.exist.xquery.util.Error;
 import org.exist.xquery.value.*;
 
+import javax.xml.XMLConstants;
+
 
 /**
  * XQuery 3.0 computed namespace constructor.
@@ -97,9 +99,9 @@ public class NamespaceConstructor extends NodeConstructor {
         final Sequence uriSeq = content.eval(contextSequence, contextItem);
         final String value = uriSeq.getStringValue();
 
-        if (prefix.equals("xmlns")) {
+        if (prefix.equals(XMLConstants.XMLNS_ATTRIBUTE)) {
             throw new XPathException(this, ErrorCodes.XQDY0101, "Cannot bind xmlns prefix");
-        } else if (prefix.equals("xml") && !value.equals(Namespaces.XML_NS)) {
+        } else if (prefix.equals(XMLConstants.XML_NS_PREFIX) && !value.equals(Namespaces.XML_NS)) {
             throw new XPathException(this, ErrorCodes.XQDY0101, "Cannot bind xml prefix to another namespace");
         } else if (value.equals(Namespaces.XML_NS) && !prefix.equals("xml")) {
             throw new XPathException(this, ErrorCodes.XQDY0101, "Cannot bind prefix to XML namespace");
