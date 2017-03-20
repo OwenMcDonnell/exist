@@ -1,56 +1,47 @@
 /*
- *  eXist Open Source Native XML Database
- *  Copyright (C) 2001-04 Wolfgang M. Meier
- *  wolfgang@exist-db.org
- *  http://exist-db.org
+ * eXist Open Source Native XML Database
+ * Copyright (C) 2001-2017 The eXist Project
+ * http://exist-db.org
  *
- *  This program is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public License
- *  as published by the Free Software Foundation; either version 2
- *  of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU Lesser General Public License for more details.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
  *
- *  You should have received a copy of the GNU Lesser General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
- * 
- *  $Id$
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program; if not, write to the Free Software Foundation
+ * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 package org.exist.xquery;
 
 import org.exist.Namespaces;
-import org.exist.dom.memtree.DocumentImpl;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.util.XMLChar;
 import org.exist.xquery.util.*;
 import org.exist.xquery.util.Error;
 import org.exist.xquery.value.*;
 
-import java.util.Iterator;
-
 
 /**
  * XQuery 3.0 computed namespace constructor.
- * 
+ *
  * @author wolf
  */
 public class NamespaceConstructor extends NodeConstructor {
 
     private Expression qnameExpr;
     private Expression content = null;
-    
-    /**
-     * @param context
-     */
-    public NamespaceConstructor(XQueryContext context) {
+
+    public NamespaceConstructor(final XQueryContext context) {
         super(context);
     }
 
-    public void setContentExpr(PathExpr path) {
+    public void setContentExpr(final PathExpr path) {
         path.setUseStaticContext(true);
         final Expression expr = new DynamicCardinalityCheck(context, Cardinality.EXACTLY_ONE, path,
                 new Error(Error.FUNC_PARAM_CARDINALITY));
@@ -64,11 +55,9 @@ public class NamespaceConstructor extends NodeConstructor {
         this.qnameExpr = expr;
     }
 
-    /* (non-Javadoc)
-     * @see org.exist.xquery.Expression#analyze(org.exist.xquery.Expression)
-     */
-    public void analyze(AnalyzeContextInfo contextInfo) throws XPathException {
-    	super.analyze(contextInfo);
+    @Override
+    public void analyze(final AnalyzeContextInfo contextInfo) throws XPathException {
+        super.analyze(contextInfo);
         final AnalyzeContextInfo newContextInfo = new AnalyzeContextInfo(contextInfo);
         newContextInfo.setParent(this);
         newContextInfo.addFlag(IN_NODE_CONSTRUCTOR);
@@ -77,22 +66,22 @@ public class NamespaceConstructor extends NodeConstructor {
             content.analyze(newContextInfo);
         }
     }
-    
-    /* (non-Javadoc)
-     * @see org.exist.xquery.Expression#eval(org.exist.xquery.value.Sequence, org.exist.xquery.value.Item)
-     */
-    public Sequence eval(Sequence contextSequence, Item contextItem) throws XPathException {
+
+    @Override
+    public Sequence eval(final Sequence contextSequence, final Item contextItem) throws XPathException {
         if (context.getProfiler().isEnabled()) {
-            context.getProfiler().start(this);       
+            context.getProfiler().start(this);
             context.getProfiler().message(this, Profiler.DEPENDENCIES, "DEPENDENCIES", Dependency.getDependenciesName(this.getDependencies()));
-            if (contextSequence != null)
-                {context.getProfiler().message(this, Profiler.START_SEQUENCES, "CONTEXT SEQUENCE", contextSequence);}
-            if (contextItem != null)
-                {context.getProfiler().message(this, Profiler.START_SEQUENCES, "CONTEXT ITEM", contextItem.toSequence());}
+            if (contextSequence != null) {
+                context.getProfiler().message(this, Profiler.START_SEQUENCES, "CONTEXT SEQUENCE", contextSequence);
+            }
+            if (contextItem != null) {
+                context.getProfiler().message(this, Profiler.START_SEQUENCES, "CONTEXT ITEM", contextItem.toSequence());
+            }
         }
-        
+
         final MemTreeBuilder builder = context.getDocumentBuilder();
-		context.proceed(this, builder);
+        context.proceed(this, builder);
 
         final Sequence prefixSeq = qnameExpr.eval(contextSequence, contextItem);
         if (!(Type.subTypeOf(prefixSeq.getItemType(), Type.STRING) || prefixSeq.getItemType() == Type.UNTYPED_ATOMIC)) {
@@ -122,18 +111,17 @@ public class NamespaceConstructor extends NodeConstructor {
 
         //context.declareInScopeNamespace(prefix, value);
         final int nodeNr = builder.namespaceNode(prefix, value);
-        final Sequence result = ((DocumentImpl)builder.getDocument()).getNamespaceNode(nodeNr);
-        
-        if (context.getProfiler().isEnabled()) 
-            {context.getProfiler().end(this, "", result);}
-        
+        final Sequence result = builder.getDocument().getNamespaceNode(nodeNr);
+
+        if (context.getProfiler().isEnabled()) {
+            context.getProfiler().end(this, "", result);
+        }
+
         return result;
     }
 
-    /* (non-Javadoc)
-     * @see org.exist.xquery.Expression#dump(org.exist.xquery.util.ExpressionDumper)
-     */
-    public void dump(ExpressionDumper dumper) {
+    @Override
+    public void dump(final ExpressionDumper dumper) {
         dumper.display("namespace ");
         //TODO : remove curly braces if Qname
         dumper.display("{");
@@ -141,13 +129,14 @@ public class NamespaceConstructor extends NodeConstructor {
         dumper.display("} ");
         dumper.display("{");
         dumper.startIndent();
-        if(content != null) {
+        if (content != null) {
             content.dump(dumper);
         }
         dumper.endIndent().nl();
         dumper.display("} ");
     }
-    
+
+    @Override
     public String toString() {
         final StringBuilder result = new StringBuilder();
         result.append("namespace ");
@@ -161,12 +150,13 @@ public class NamespaceConstructor extends NodeConstructor {
         }
         result.append("} ");
         return result.toString();
-    }   
-    
-    public void resetState(boolean postOptimization) {
-    	super.resetState(postOptimization);
-    	qnameExpr.resetState(postOptimization);
-        if(content != null) {
+    }
+
+    @Override
+    public void resetState(final boolean postOptimization) {
+        super.resetState(postOptimization);
+        qnameExpr.resetState(postOptimization);
+        if (content != null) {
             content.resetState(postOptimization);
         }
     }
