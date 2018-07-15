@@ -1,14 +1,16 @@
 package org.exist.xquery.value;
 
 import java.io.FilterInputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
+import com.googlecode.junittoolbox.ParallelRunner;
 import org.exist.util.io.CachingFilterInputStream;
+import org.exist.util.io.FastByteArrayInputStream;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xquery.XPathException;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import static org.junit.Assert.*;
 
@@ -16,37 +18,65 @@ import static org.junit.Assert.*;
  *
  * @author Adam Retter <adam@existsolutions.com>
  */
+@RunWith(ParallelRunner.class)
 public class BinaryValueFromInputStreamTest {
 
     @Test
     public void getInputStream() throws XPathException, IOException {
+        final byte[] testData = "test data".getBytes();
 
-        BinaryValueManager binaryValueManager = new MockBinaryValueManager();
+        final BinaryValueManager binaryValueManager = new MockBinaryValueManager();
+        try(final InputStream bais = new UnmarkableByteArrayInputStream(testData)) {
 
-        try{
-            final byte[] testData = "test data".getBytes();
+            final BinaryValue binaryValue = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
 
-            InputStream bais = new FilterInputStream(new ByteArrayInputStream(testData)) {
-                @Override
-                public boolean markSupported() {
-                    return false;
-                }
-            };
-
-            BinaryValue binaryValue = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
-
-            InputStream is = binaryValue.getInputStream();
-
-            int read = -1;
-            byte buf[] = new byte[1024];
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            while((read = is.read(buf)) > -1) {
-                baos.write(buf, 0, read);
+            try(final InputStream is = binaryValue.getInputStream()) {
+                final byte[] actual = readAll(is);
+                assertArrayEquals(testData, actual);
             }
-
-            assertArrayEquals(testData, baos.toByteArray());
         } finally {
             binaryValueManager.runCleanupTasks();
+        }
+    }
+
+    @Test
+    public void repeated_getInputStream_sameUnderlyingCache() throws XPathException, IOException {
+        final byte[] testData = "test data".getBytes();
+
+        BinaryValue binaryValue1 = null;
+        BinaryValue binaryValue2 = null;
+
+        final BinaryValueManager binaryValueManager = new MockBinaryValueManager();
+        try(final InputStream bais = new UnmarkableByteArrayInputStream(testData)) {
+
+            binaryValue1 = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);  //binValue1.sharedRefCount==1
+
+            try(final InputStream is = binaryValue1.getInputStream()) {   //binValue1.sharedRefCount==2
+                final byte[] actual = readAll(is);
+                assertArrayEquals(testData, actual);
+            }  //binValue1.sharedRefCount==1
+
+            assertFalse(binaryValue1.isClosed());
+
+            // second binary from InputStream of first binary
+            try(final InputStream is = binaryValue1.getInputStream()) {   //binValue1.sharedRefCount==2
+                binaryValue2 = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), is);     //binValue1.sharedRefCount==3
+
+                try(final InputStream is2 = binaryValue2.getInputStream()) {
+                    final byte[] actual = readAll(is2);
+                    assertArrayEquals(testData, actual);
+                }
+
+                assertFalse(binaryValue2.isClosed());
+            }
+//binValue1.sharedRefCount==2
+            assertFalse(binaryValue1.isClosed());
+
+        } finally {
+            binaryValueManager.runCleanupTasks();
+
+            assertTrue(binaryValue2.isClosed());
+            assertTrue(binaryValue1.isClosed());
         }
     }
 
@@ -56,7 +86,7 @@ public class BinaryValueFromInputStreamTest {
 
         final byte[] testData = "test data".getBytes();
 
-        try (final InputStream bais = new ByteArrayInputStream(testData)) {
+        try (final InputStream bais = new FastByteArrayInputStream(testData)) {
             final BinaryValue binaryValue = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
             final InputStream bvis = binaryValue.getInputStream();
 
@@ -68,10 +98,12 @@ public class BinaryValueFromInputStreamTest {
             // It should close the original binary value, as we have not incremented the reference count!
             filteredBinaryValue.close();
             assertTrue(filteredBinaryValue.isClosed());
+            fis.close();
+            bvis.close();
             assertTrue(binaryValue.isClosed());
 
             // we should not be able to read from the origin binary value!
-            try (final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
 
                 // this should throw an IOException
                 binaryValue.streamBinaryTo(baos);
@@ -88,7 +120,7 @@ public class BinaryValueFromInputStreamTest {
 
         final byte[] testData = "test data".getBytes();
 
-        try (final InputStream bais = new ByteArrayInputStream(testData)) {
+        try (final InputStream bais = new FastByteArrayInputStream(testData)) {
             final BinaryValue binaryValue = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
             final InputStream bvis = binaryValue.getInputStream();
 
@@ -103,13 +135,15 @@ public class BinaryValueFromInputStreamTest {
             assertFalse(binaryValue.isClosed());
 
             // we should still be able to read from the origin binary value!
-            try (final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
                 binaryValue.streamBinaryTo(baos);
 
                 assertArrayEquals(testData, baos.toByteArray());
             }
 
             // finally close the original binary value
+            fis.close();
+            bvis.close();
             binaryValue.close();
             assertTrue(binaryValue.isClosed());
 
@@ -124,7 +158,7 @@ public class BinaryValueFromInputStreamTest {
 
         final byte[] testData = "test data".getBytes();
 
-        try (final InputStream bais = new ByteArrayInputStream(testData)) {
+        try (final InputStream bais = new FastByteArrayInputStream(testData)) {
             final BinaryValue binaryValue1 = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
             final InputStream bvis1 = binaryValue1.getInputStream();
 
@@ -139,11 +173,14 @@ public class BinaryValueFromInputStreamTest {
             // It should close the original binary values, as we have not incremented the reference counts!
             filteredBinaryValue.close();
             assertTrue(filteredBinaryValue.isClosed());
+            fis.close();
+            bvis2.close();
             assertTrue(binaryValue2.isClosed());
+            bvis1.close();
             assertTrue(binaryValue1.isClosed());
 
             // we should not be able to read from the origin binary value!
-            try (final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
 
                 // this should throw an IOException
                 binaryValue1.streamBinaryTo(baos);
@@ -161,8 +198,8 @@ public class BinaryValueFromInputStreamTest {
         final byte[] testData1 = "test data".getBytes();
         final byte[] testData2 = "second test data".getBytes();
 
-        try (final InputStream bais1 = new ByteArrayInputStream(testData1);
-                final InputStream bais2 = new ByteArrayInputStream(testData2)) {
+        try (final InputStream bais1 = new FastByteArrayInputStream(testData1);
+                final InputStream bais2 = new FastByteArrayInputStream(testData2)) {
 
             final BinaryValue binaryValue1 = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais1);
             final InputStream bvis1 = binaryValue1.getInputStream();
@@ -182,22 +219,26 @@ public class BinaryValueFromInputStreamTest {
             assertFalse(binaryValue1.isClosed());
 
             // we should still be able to read from the origin binary value2!
-            try (final ByteArrayOutputStream baos2 = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos2 = new FastByteArrayOutputStream()) {
                 binaryValue2.streamBinaryTo(baos2);
 
                 assertArrayEquals(testData2, baos2.toByteArray());
             }
 
             // we should still be able to read from the original binary value1!
-            try (final ByteArrayOutputStream baos1 = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos1 = new FastByteArrayOutputStream()) {
                 binaryValue1.streamBinaryTo(baos1);
 
                 assertArrayEquals(testData1, baos1.toByteArray());
             }
 
             // finally close the original binary values
+            fis.close();
+            bvis2.close();
             binaryValue2.close();
             assertTrue(binaryValue2.isClosed());
+
+            bvis1.close();
             binaryValue1.close();
             assertTrue(binaryValue1.isClosed());
 
@@ -212,7 +253,7 @@ public class BinaryValueFromInputStreamTest {
 
         final byte[] testData = "test data".getBytes();
 
-        try (final InputStream bais = new ByteArrayInputStream(testData)) {
+        try (final InputStream bais = new FastByteArrayInputStream(testData)) {
             final BinaryValue binaryValue = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
             final InputStream bvis = binaryValue.getInputStream();
 
@@ -228,12 +269,17 @@ public class BinaryValueFromInputStreamTest {
             // we now destroy the second filtered binary value, just as it would if it went out of scope from popLocalVariables#popLocalVariables.
             // It should close the first filtered binary value and original binary value, as we have not incremented the reference counts!
             filteredBinaryValue2.close();
+            fis2.close();
+            fbvis.close();
             assertTrue(filteredBinaryValue2.isClosed());
             assertTrue(filteredBinaryValue1.isClosed());
+
+            fis1.close();
+            bvis.close();
             assertTrue(binaryValue.isClosed());
 
             // we should not be able to read from the first filtered binary value!
-            try (final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
 
                 // this should throw an IOException
                 filteredBinaryValue1.streamBinaryTo(baos);
@@ -250,7 +296,7 @@ public class BinaryValueFromInputStreamTest {
 
         final byte[] testData = "test data".getBytes();
 
-        try (final InputStream bais = new ByteArrayInputStream(testData)) {
+        try (final InputStream bais = new FastByteArrayInputStream(testData)) {
             final BinaryValue binaryValue = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
             final InputStream bvis = binaryValue.getInputStream();
 
@@ -271,7 +317,7 @@ public class BinaryValueFromInputStreamTest {
             assertFalse(binaryValue.isClosed());
 
             // we should still be able to read from the filtered binary value!
-            try (final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
                 filteredBinaryValue1.streamBinaryTo(baos);
 
                 assertArrayEquals(testData, baos.toByteArray());
@@ -279,17 +325,19 @@ public class BinaryValueFromInputStreamTest {
 
             // we now destroy the first filtered binary value, just as it would if it went out of scope from popLocalVariables#popLocalVariables.
             // It should not close the original binary value, as BinaryValueFilteringInputStream increased the reference count.
+            fis2.close();
             filteredBinaryValue1.close();
             assertTrue(filteredBinaryValue1.isClosed());
 
             // we should still be able to read from the origin binary value!
-            try (final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
                 binaryValue.streamBinaryTo(baos);
 
                 assertArrayEquals(testData, baos.toByteArray());
             }
 
             // finally close the original binary value
+            bvis.close();
             binaryValue.close();
             assertTrue(binaryValue.isClosed());
 
@@ -304,7 +352,7 @@ public class BinaryValueFromInputStreamTest {
 
         final byte[] testData = "test data".getBytes();
 
-        try (final InputStream bais = new ByteArrayInputStream(testData)) {
+        try (final InputStream bais = new FastByteArrayInputStream(testData)) {
 
             final BinaryValue binaryValue = BinaryValueFromInputStream.getInstance(binaryValueManager, new Base64BinaryValueType(), bais);
 
@@ -331,17 +379,18 @@ public class BinaryValueFromInputStreamTest {
 
 
             // we should still be able to read from the filtered binary value2!
-            try (final ByteArrayOutputStream baos2 = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos2 = new FastByteArrayOutputStream()) {
                 filteredBinaryValue2.streamBinaryTo(baos2);
 
                 assertArrayEquals(testData, baos2.toByteArray());
             }
 
+            mfis.close();
             filteredBinaryValue2.close();
             assertTrue(filteredBinaryValue2.isClosed());
 
             // we should still be able to read from the filtered binary value1!
-            try (final ByteArrayOutputStream baos1 = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos1 = new FastByteArrayOutputStream()) {
                 filteredBinaryValue1.streamBinaryTo(baos1);
 
                 assertArrayEquals(testData, baos1.toByteArray());
@@ -351,13 +400,15 @@ public class BinaryValueFromInputStreamTest {
             assertTrue(filteredBinaryValue1.isClosed());
 
             // we should still be able to read from the original binary value!
-            try (final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
                 binaryValue.streamBinaryTo(baos);
 
                 assertArrayEquals(testData, baos.toByteArray());
             }
 
             // finally close the original binary value
+            fis2.close();
+            fis1.close();
             binaryValue.close();
             assertTrue(binaryValue.isClosed());
 
@@ -366,6 +417,23 @@ public class BinaryValueFromInputStreamTest {
         }
     }
 
+    private static byte[] readAll(final InputStream is) throws IOException {
+        try(final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
+            baos.write(is);
+            return baos.toByteArray();
+        }
+    }
+
+    private static class UnmarkableByteArrayInputStream extends FastByteArrayInputStream {
+        public UnmarkableByteArrayInputStream(final byte[] buf) {
+            super(buf);
+        }
+
+        @Override
+        public boolean markSupported() {
+            return false;
+        }
+    }
 
     private static class BinaryValueFilteringInputStream extends FilterInputStream {
         public BinaryValueFilteringInputStream(final InputStream inputStream, final boolean incrementReferenceCount) {

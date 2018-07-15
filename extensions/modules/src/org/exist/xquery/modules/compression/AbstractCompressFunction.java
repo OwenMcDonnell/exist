@@ -21,19 +21,21 @@
  */
 package org.exist.xquery.modules.compression;
 
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.collections.Collection;
-import org.exist.dom.persistent.BinaryDocument;
-import org.exist.dom.persistent.DefaultDocumentSet;
-import org.exist.dom.persistent.DocumentImpl;
-import org.exist.dom.persistent.MutableDocumentSet;
+import org.exist.dom.persistent.*;
 import org.exist.security.PermissionDeniedException;
+import org.exist.storage.DBBroker;
 import org.exist.storage.lock.Lock.LockMode;
+import org.exist.storage.lock.LockManager;
+import org.exist.storage.lock.ManagedDocumentLock;
 import org.exist.storage.serializers.Serializer;
 import org.exist.util.Base64Decoder;
+import org.exist.util.FileUtils;
 import org.exist.util.LockException;
+import org.exist.util.io.FastByteArrayInputStream;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.*;
 import org.exist.xquery.value.*;
@@ -46,6 +48,9 @@ import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnsupportedCharsetException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Iterator;
 import java.util.zip.CRC32;
 import java.util.zip.DeflaterOutputStream;
@@ -115,7 +120,7 @@ public abstract class AbstractCompressFunction extends BasicFunction
                 encoding = StandardCharsets.UTF_8;
             }
 
-            try(final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            try(final FastByteArrayOutputStream baos = new FastByteArrayOutputStream();
                     OutputStream os = stream(baos, encoding)) {
 
                 // iterate through the argument sequence
@@ -136,7 +141,7 @@ public abstract class AbstractCompressFunction extends BasicFunction
                     ((DeflaterOutputStream)os).finish();
                 }
 
-                return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), new ByteArrayInputStream(baos.toByteArray()));
+                return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), new FastByteArrayInputStream(baos.toByteArray()));
             }
 		} catch (final UnsupportedCharsetException | IOException e) {
 			throw new XPathException(this, e.getMessage(), e);
@@ -155,51 +160,48 @@ public abstract class AbstractCompressFunction extends BasicFunction
                     }
 
                     // got a file
-                    File file = new File(uri.getPath());
+                    Path file = Paths.get(uri.getPath());
                     compressFile(os, file, useHierarchy, stripOffset, method, resourceName);
 
                 } else {
 
-                    // try for a doc
-                    DocumentImpl doc = null;
-                    try
-                    {
-                        XmldbURI xmldburi = XmldbURI.create(uri);
-                        doc = context.getBroker().getXMLResource(xmldburi, LockMode.READ_LOCK);
+                    final XmldbURI xmldburi = XmldbURI.create(uri);
 
-                        if(doc == null)
-                        {
-                            // no doc, try for a collection
-                            Collection col = context.getBroker().getCollection(xmldburi);
+                    // try for a collection
+                    try(final Collection collection = context.getBroker().openCollection(xmldburi, LockMode.READ_LOCK)) {
+                        if(collection != null) {
+                            compressCollection(os, collection, useHierarchy, stripOffset);
+                            return;
+                        }
+                    } catch(final PermissionDeniedException | LockException | SAXException | IOException pde) {
+                        throw new XPathException(this, pde.getMessage());
+                    }
 
-                            if(col != null)
-                            {
-                                // got a collection
-                                compressCollection(os, col, useHierarchy, stripOffset);
-                            }
-                            else
-                            {
-                                // no doc or collection
+
+                    // otherwise, try for a doc
+                    try(final Collection collection = context.getBroker().openCollection(xmldburi.removeLastSegment(), LockMode.READ_LOCK)) {
+                        if(collection == null) {
+                            throw new XPathException(this, "Invalid URI: " + uri.toString());
+                        }
+
+                        try(final LockedDocument doc = collection.getDocumentWithLock(context.getBroker(), xmldburi.lastSegment(), LockMode.READ_LOCK)) {
+
+                            // NOTE: early release of Collection lock inline with Asymmetrical Locking scheme
+                            collection.close();
+
+                            if(doc == null) {
                                 throw new XPathException(this, "Invalid URI: " + uri.toString());
                             }
+
+                            compressResource(os, doc.getDocument(), useHierarchy, stripOffset, method, resourceName);
+                            return;
                         }
-                        else
-                        {
-                            // got a doc
-                            compressResource(os, doc, useHierarchy, stripOffset, method, resourceName);
-                        }
-                    }
-                    catch(PermissionDeniedException | LockException | SAXException | IOException pde)
-                    {
+                    } catch(final PermissionDeniedException | LockException | SAXException | IOException pde) {
                         throw new XPathException(this, pde.getMessage());
-                    } finally
-                    {
-                        if(doc != null)
-                            doc.getUpdateLock().release(LockMode.READ_LOCK);
                     }
                 }
 
-            } catch (IOException e) {
+            } catch (final IOException e) {
                 throw new XPathException(this, e.getMessage());
             }
 
@@ -216,49 +218,40 @@ public abstract class AbstractCompressFunction extends BasicFunction
      *            Whether to use a folder hierarchy in the archive file that
      *            reflects the collection hierarchy
      */
-    private void compressFile(OutputStream os, File file, boolean useHierarchy, String stripOffset, String method, String name) throws IOException {
+    private void compressFile(final OutputStream os, final Path file, boolean useHierarchy, String stripOffset, String method, String name) throws IOException {
 
-        if (file.isFile()) {
+        if (!Files.isDirectory(file)) {
 
             // create an entry in the Tar for the document
-            Object entry = null;
-            CRC32 chksum = new CRC32();
-            try(final ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-
-                if (name != null) {
-                    entry = newEntry(name);
-                } else if (useHierarchy) {
-                    entry = newEntry(removeLeadingOffset(file.getPath(), stripOffset));
-                } else {
-                    entry = newEntry(file.getName());
-                }
-
-                try (final InputStream is = new FileInputStream(file)) {
-                    byte[] data = new byte[16384];
-                    int len = -1;
-                    while ((len = is.read(data, 0, data.length)) > 0) {
-                        baos.write(data, 0, len);
-                    }
-                }
-                final byte[] value = baos.toByteArray();
-                // close the entry
-                if (entry instanceof ZipEntry &&
-                        "store".equals(method)) {
-                    ((ZipEntry) entry).setMethod(ZipOutputStream.STORED);
-                    chksum.update(value);
-                    ((ZipEntry) entry).setCrc(chksum.getValue());
-                    ((ZipEntry) entry).setSize(value.length);
-                }
-
-                putEntry(os, entry);
-                os.write(value);
-                closeEntry(os);
+            final Object entry;
+            if (name != null) {
+                entry = newEntry(name);
+            } else if (useHierarchy) {
+                entry = newEntry(removeLeadingOffset(file.toAbsolutePath().toString(), stripOffset));
+            } else {
+                entry = newEntry(file.getFileName().toString());
             }
+
+            final byte[] value = Files.readAllBytes(file);
+
+            // close the entry
+            final CRC32 chksum = new CRC32();
+            if (entry instanceof ZipEntry &&
+                    "store".equals(method)) {
+                ((ZipEntry) entry).setMethod(ZipOutputStream.STORED);
+                chksum.update(value);
+                ((ZipEntry) entry).setCrc(chksum.getValue());
+                ((ZipEntry) entry).setSize(value.length);
+            }
+
+            putEntry(os, entry);
+            os.write(value);
+            closeEntry(os);
 
         } else {
 
-            for (String i : file.list()) {
-                compressFile(os, new File(file, i), useHierarchy, stripOffset, method, null);
+            for (final Path child : FileUtils.list(file)) {
+                compressFile(os, file.resolve(child), useHierarchy, stripOffset, method, null);
             }
 
         }
@@ -413,16 +406,10 @@ public abstract class AbstractCompressFunction extends BasicFunction
 	 */
 	private void compressResource(OutputStream os, DocumentImpl doc, boolean useHierarchy, String stripOffset, String method, String name) throws IOException, SAXException {
 		// create an entry in the Tar for the document
-		Object entry = null;
-        byte[] value = new byte[0];
-        CRC32 chksum = new CRC32();
-        ByteArrayOutputStream baos = new ByteArrayOutputStream(); 
-
-                if(name != null)
-                {
-                    entry = newEntry(name);
-                }
-                else if (useHierarchy) {
+        final Object entry;
+        if(name != null) {
+            entry = newEntry(name);
+        } else if (useHierarchy) {
 			String docCollection = doc.getCollection().getURI().toString();
 			XmldbURI collection = XmldbURI.create(removeLeadingOffset(docCollection, stripOffset));
 			entry = newEntry(collection.append(doc.getFileURI()).toString());
@@ -430,6 +417,7 @@ public abstract class AbstractCompressFunction extends BasicFunction
 			entry = newEntry(doc.getFileURI().toString());
 		}
 
+        final byte[] value;
 		if (doc.getResourceType() == DocumentImpl.XML_FILE) {
 			// xml file
 			Serializer serializer = context.getBroker().getSerializer();
@@ -440,16 +428,17 @@ public abstract class AbstractCompressFunction extends BasicFunction
             value = strDoc.getBytes();            
 		} else if (doc.getResourceType() == DocumentImpl.BINARY_FILE) {
 			// binary file
-            InputStream is = context.getBroker().getBinaryResource((BinaryDocument)doc);
-			byte[] data = new byte[16384];
-            int len = 0;
-            while ((len=is.read(data,0,data.length))>0) {
-            	baos.write(data,0,len);
+            try (final InputStream is = context.getBroker().getBinaryResource((BinaryDocument)doc);
+                 final FastByteArrayOutputStream baos = new FastByteArrayOutputStream(doc.getContentLength() == -1 ? 1024 : (int)doc.getContentLength())) {
+                baos.write(is);
+                value = baos.toByteArray();
             }
-            is.close();
-            value = baos.toByteArray();
-		}
+		} else {
+		    value = new byte[0];
+        }
+
 		// close the entry
+        final CRC32 chksum = new CRC32();
         if (entry instanceof ZipEntry &&
             "store".equals(method)) {
             ((ZipEntry) entry).setMethod(ZipOutputStream.STORED);
@@ -477,28 +466,27 @@ public abstract class AbstractCompressFunction extends BasicFunction
 	 */
 	private void compressCollection(OutputStream os, Collection col, boolean useHierarchy, String stripOffset) throws IOException, SAXException, LockException, PermissionDeniedException {
 		// iterate over child documents
-		MutableDocumentSet childDocs = new DefaultDocumentSet();
-		col.getDocuments(context.getBroker(), childDocs);
-		for (Iterator<DocumentImpl> itChildDocs = childDocs.getDocumentIterator(); itChildDocs.hasNext();) {
+        final DBBroker broker = context.getBroker();
+        final LockManager lockManager = broker.getBrokerPool().getLockManager();
+        final MutableDocumentSet childDocs = new DefaultDocumentSet();
+		col.getDocuments(broker, childDocs);
+		for (final Iterator<DocumentImpl> itChildDocs = childDocs.getDocumentIterator(); itChildDocs.hasNext();) {
 			DocumentImpl childDoc = itChildDocs.next();
-			childDoc.getUpdateLock().acquire(LockMode.READ_LOCK);
-			try {
+			try(final ManagedDocumentLock updateLock = lockManager.acquireDocumentReadLock(childDoc.getURI())) {
 				compressResource(os, childDoc, useHierarchy, stripOffset, "", null);
-			} finally {
-				childDoc.getUpdateLock().release(LockMode.READ_LOCK);
 			}
 		}
 		// iterate over child collections
-		for (Iterator<XmldbURI> itChildCols = col.collectionIterator(context.getBroker()); itChildCols.hasNext();) {
+		for (final Iterator<XmldbURI> itChildCols = col.collectionIterator(broker); itChildCols.hasNext();) {
 			// get the child collection
 			XmldbURI childColURI = itChildCols.next();
-			Collection childCol = context.getBroker().getCollection(col.getURI().append(childColURI));
+			Collection childCol = broker.getCollection(col.getURI().append(childColURI));
 			// recurse
 			compressCollection(os, childCol, useHierarchy, stripOffset);
 		}
 	}
 	
-	protected abstract OutputStream stream(ByteArrayOutputStream baos, Charset encoding);
+	protected abstract OutputStream stream(FastByteArrayOutputStream baos, Charset encoding);
 	
 	protected abstract Object newEntry(String name);
 	

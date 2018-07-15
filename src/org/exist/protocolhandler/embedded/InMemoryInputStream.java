@@ -19,24 +19,25 @@
  */
 package org.exist.protocolhandler.embedded;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.EXistException;
 import org.exist.collections.Collection;
 import org.exist.dom.persistent.BinaryDocument;
 import org.exist.dom.persistent.DocumentImpl;
+import org.exist.dom.persistent.LockedDocument;
 import org.exist.protocolhandler.xmldb.XmldbURL;
 import org.exist.storage.BrokerPool;
 import org.exist.storage.DBBroker;
 import org.exist.storage.lock.Lock.LockMode;
 import org.exist.storage.serializers.EXistOutputKeys;
 import org.exist.storage.serializers.Serializer;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xmldb.XmldbURI;
 
 /**
@@ -55,49 +56,43 @@ public class InMemoryInputStream {
       throw new IOException(e);
     }
 
-    ByteArrayOutputStream os = new ByteArrayOutputStream();
-
-    try (DBBroker broker = db.getBroker()) {
+    try (final FastByteArrayOutputStream os = new FastByteArrayOutputStream();
+         final DBBroker broker = db.getBroker()) {
       final XmldbURI path = XmldbURI.create(xmldbURL.getPath());
 
-      DocumentImpl resource = null;
-      Collection collection = null;
-      try {
-        resource = broker.getXMLResource(path, LockMode.READ_LOCK);
-        if (resource == null) {
-          // Test for collection
-          collection = broker.openCollection(path, LockMode.READ_LOCK);
-          if (collection == null) {
+      // Test for collection
+      try(final Collection collection = broker.openCollection(path, LockMode.READ_LOCK)) {
+        if(collection != null) {
+          // Collection
+          throw new IOException("Resource " + xmldbURL.getPath() + " is a collection.");
+        }
+
+        try (final LockedDocument lockedDocument = broker.getXMLResource(path, LockMode.READ_LOCK)) {
+
+//          // NOTE: early release of Collection lock inline with Asymmetrical Locking scheme
+//          collection.close();
+
+          if(lockedDocument == null) {
             // No collection, no document
             throw new IOException("Resource " + xmldbURL.getPath() + " not found.");
-
-          } else {
-            // Collection
-            throw new IOException("Resource " + xmldbURL.getPath() + " is a collection.");
           }
 
-        } else {
-          if (resource.getResourceType() == DocumentImpl.XML_FILE) {
+          final DocumentImpl document = lockedDocument.getDocument();
+          if (document.getResourceType() == DocumentImpl.XML_FILE) {
             final Serializer serializer = broker.getSerializer();
             serializer.reset();
 
             // Preserve doctype
             serializer.setProperty(EXistOutputKeys.OUTPUT_DOCTYPE, "yes");
             try(final Writer w = new OutputStreamWriter(os, "UTF-8")) {
-              serializer.serialize(resource, w);
+              serializer.serialize(document, w);
             }
 
           } else {
-            broker.readBinaryResource((BinaryDocument) resource, os);
+            broker.readBinaryResource((BinaryDocument) document, os);
           }
-        }
-      } finally {
-        if (collection != null) {
-          collection.release(LockMode.READ_LOCK);
-        }
 
-        if (resource != null) {
-          resource.getUpdateLock().release(LockMode.READ_LOCK);
+          return os.toFastByteInputStream();
         }
       }
     } catch (final IOException ex) {
@@ -107,8 +102,5 @@ public class InMemoryInputStream {
       LOG.error(ex,ex);
       throw new IOException(ex.getMessage(), ex);
     }
-
-    return new ByteArrayInputStream(os.toByteArray());
   }
-
 }

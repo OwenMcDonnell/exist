@@ -37,7 +37,9 @@ import org.exist.storage.txn.Txn;
 import org.exist.util.LockException;
 import org.exist.xmldb.function.LocalXmldbFunction;
 import org.exist.xquery.value.AnyURIValue;
+import org.exist.xquery.value.BinaryValue;
 import org.exist.xquery.value.Sequence;
+import org.exist.xquery.value.SequenceIterator;
 import org.w3c.dom.Node;
 import org.xmldb.api.base.*;
 import org.xmldb.api.base.Collection;
@@ -60,7 +62,7 @@ import org.exist.xquery.XPathException;
 import org.exist.xquery.XQuery;
 import org.exist.xquery.XQueryContext;
 
-public class LocalXPathQueryService extends AbstractLocalService implements XPathQueryServiceImpl, XQueryService {
+public class LocalXPathQueryService extends AbstractLocalService implements EXistXPathQueryService, EXistXQueryService {
 
 	private final static Logger LOG = LogManager.getLogger(LocalXPathQueryService.class);
 
@@ -116,41 +118,44 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
 
     @Override
     public ResourceSet query(final String query, final String sortBy) throws XMLDBException {
-        final XmldbURI[] docs = new XmldbURI[] { XmldbURI.create(collection.getName()) };
-        return doQuery(query, docs, null, sortBy);
+        return withDb((broker, transaction) -> {
+            final XmldbURI[] docs = new XmldbURI[] { XmldbURI.create(collection.getName(broker, transaction)) };
+            return doQuery(broker, transaction, query, docs, null, sortBy);
+        });
     }
 
     @Override
     public ResourceSet query(final XMLResource res, final String query, final String sortBy) throws XMLDBException {
         final Node n = ((LocalXMLResource) res).root;
-        if (n != null && n instanceof org.exist.dom.memtree.NodeImpl) {
-            final XmldbURI[] docs = new XmldbURI[] { XmldbURI.create(res.getParentCollection().getName()) };
-            return doQuery(query, docs, (org.exist.dom.memtree.NodeImpl)n, sortBy);
-        }
-        final NodeProxy node = ((LocalXMLResource) res).getNode();
-        if (node == null) {
-            // resource is a document
-            //TODO : use dedicated function in XmldbURI
-            final XmldbURI[] docs = new XmldbURI[] { XmldbURI.create(res.getParentCollection().getName()).append(res.getDocumentId()) };
-            return doQuery(query, docs, null, sortBy);
-        } else {
-            final NodeSet set = new ExtArrayNodeSet(1);
-            set.add(node);
-            final XmldbURI[] docs = new XmldbURI[] { node.getOwnerDocument().getURI() };
-            return doQuery(query, docs, set, sortBy);
-        }
-    }
 
-    private ResourceSet doQuery(final String query, final XmldbURI[] docs, final Sequence contextSet, final String sortExpr) throws XMLDBException {
         return withDb((broker, transaction) -> {
-            final Either<XPathException, CompiledExpression> maybeExpr = compileAndCheck(broker, transaction, query);
-            if(maybeExpr.isLeft()) {
-                final XPathException e = maybeExpr.left().get();
-                throw new XMLDBException(ErrorCodes.VENDOR_ERROR, e.getMessage(), e);
+            if (n != null && n instanceof org.exist.dom.memtree.NodeImpl) {
+                final XmldbURI[] docs = new XmldbURI[]{ getCollectionUri(broker, transaction, res.getParentCollection()) };
+                return doQuery(broker, transaction, query, docs, (org.exist.dom.memtree.NodeImpl) n, sortBy);
+            }
+            final NodeProxy node = ((LocalXMLResource) res).getNode(broker, transaction);
+            if (node == null) {
+                // resource is a document
+                //TODO : use dedicated function in XmldbURI
+                final XmldbURI[] docs = new XmldbURI[]{ getCollectionUri(broker, transaction, res.getParentCollection()).append(res.getDocumentId()) };
+                return doQuery(broker, transaction, query, docs, null, sortBy);
             } else {
-                return execute(broker, transaction, docs, contextSet, maybeExpr.right().get(), sortExpr);
+                final NodeSet set = new ExtArrayNodeSet(1);
+                set.add(node);
+                final XmldbURI[] docs = new XmldbURI[]{node.getOwnerDocument().getURI()};
+                return doQuery(broker, transaction, query, docs, set, sortBy);
             }
         });
+    }
+
+    private ResourceSet doQuery(final DBBroker broker, final Txn transaction, final String query, final XmldbURI[] docs, final Sequence contextSet, final String sortExpr) throws XMLDBException {
+        final Either<XPathException, CompiledExpression> maybeExpr = compileAndCheck(broker, transaction, query);
+        if(maybeExpr.isLeft()) {
+            final XPathException e = maybeExpr.left().get();
+            throw new XMLDBException(ErrorCodes.VENDOR_ERROR, e.getMessage(), e);
+        } else {
+            return execute(broker, transaction, docs, contextSet, maybeExpr.right().get(), sortExpr);
+        }
     }
 
     @Override
@@ -162,10 +167,10 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
     @Override
     public ResourceSet execute(final XMLResource res, final CompiledExpression expression) throws XMLDBException {
         return withDb((broker, transaction) -> {
-            final NodeProxy node = ((LocalXMLResource) res).getNode();
+            final NodeProxy node = ((LocalXMLResource) res).getNode(broker, transaction);
             if (node == null) {
                 // resource is a document
-                final XmldbURI[] docs = new XmldbURI[]{XmldbURI.create(res.getParentCollection().getName()).append(res.getDocumentId())};
+                final XmldbURI[] docs = new XmldbURI[]{ getCollectionUri(broker, transaction, res.getParentCollection()).append(res.getDocumentId()) };
                 return execute(broker, transaction, docs, null, expression, null);
             } else {
                 final NodeSet set = new ExtArrayNodeSet(1);
@@ -179,7 +184,7 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
     private ResourceSet execute(final DBBroker broker, final Txn transaction, XmldbURI[] docs, final Sequence contextSet, final CompiledExpression expression, final String sortExpr) throws XMLDBException {
         final long start = System.currentTimeMillis();
         final CompiledXQuery expr = (CompiledXQuery)expression;
-        Sequence result;
+        Sequence result = null;
         final XQueryContext context = expr.getContext();
         try {
             context.setStaticallyKnownDocuments(docs);
@@ -194,7 +199,25 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
             // need to catch all runtime exceptions here to be able to release locked documents
             throw new XMLDBException(ErrorCodes.VENDOR_ERROR, e.getMessage(), e);
         } finally {
-            context.runCleanupTasks();
+            /*
+             * Run the cleanup tasks, but don't close BinaryValues which
+             * are in the result set as the user has not yet accessed them.
+             *
+             * Final cleanup of those BinaryValues is done by the user
+             * calling EXistResource#close(), ResourceSet#clear() or CompiledExpression#reset().
+             */
+            final Sequence resSeq = result;
+            context.runCleanupTasks(o -> {
+                if(resSeq != null && o instanceof BinaryValue) {
+                    for(int i = 0; i < resSeq.getItemCount(); i++) {
+                        if (resSeq.itemAt(i) == o) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            });
         }
         LOG.debug("query took " + (System.currentTimeMillis() - start) + " ms.");
         if(result != null) {
@@ -227,7 +250,7 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
 
             final Source source = sourceOp.apply(broker, transaction);
 
-            final XmldbURI[] docs = new XmldbURI[]{XmldbURI.create(collection.getName())};
+            final XmldbURI[] docs = new XmldbURI[]{XmldbURI.create(collection.getName(broker, transaction))};
 
             final XQuery xquery = brokerPool.getXQueryService();
             final XQueryPool pool = brokerPool.getXQueryPool();
@@ -312,12 +335,14 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
 
     @Override
     public ResourceSet queryResource(final String resource, final String query) throws XMLDBException {
-    	final LocalXMLResource res = (LocalXMLResource) collection.getResource(resource);
-    	if (res == null) {
-            throw new XMLDBException(ErrorCodes.INVALID_RESOURCE, "resource '" + resource + "' not found");
-        }
-        final XmldbURI[] docs = new XmldbURI[] { XmldbURI.create(res.getParentCollection().getName()).append(res.getDocumentId()) };
-    	return doQuery(query, docs, null, null);
+    	return withDb((broker, transaction) -> {
+            final LocalXMLResource res = (LocalXMLResource) collection.getResource(broker, transaction, resource);
+            if (res == null) {
+                throw new XMLDBException(ErrorCodes.INVALID_RESOURCE, "resource '" + resource + "' not found");
+            }
+            final XmldbURI[] docs = new XmldbURI[]{ getCollectionUri(broker, transaction, res.getParentCollection()).append(res.getDocumentId()) };
+            return doQuery(broker, transaction, query, docs, null, null);
+        });
     }
 
     protected void setupContext(final Source source, final XQueryContext context) throws XMLDBException, XPathException {
@@ -362,6 +387,7 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
     @Override
     public void beginProtected() throws XMLDBException {
         try {
+            int retries = BEGIN_PROTECTED_MAX_LOCKING_RETRIES == - 1 ? -1 : BEGIN_PROTECTED_MAX_LOCKING_RETRIES - 2;
             boolean deadlockCaught;
             do {
                 reservedBroker = brokerPool.get(Optional.of(user));
@@ -372,9 +398,9 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
                     lockedDocuments = new LockedDocumentMap();
                     docs = new DefaultDocumentSet();
                     coll.allDocs(reservedBroker, docs, true, lockedDocuments, LockMode.WRITE_LOCK);
+                    return;
                 } catch (final LockException e) {
-                    LOG.debug("Deadlock detected. Starting over again. Docs: " + docs.getDocumentCount() + "; locked: " +
-                            lockedDocuments.size());
+                    LOG.warn("Deadlock detected. Starting over again. Docs: {}; locked: {}. Cause: {}", docs.getDocumentCount(), lockedDocuments.size(), e.getMessage());
                     lockedDocuments.unlock();
                     reservedBroker.close();
                     deadlockCaught = true;
@@ -382,13 +408,16 @@ public class LocalXPathQueryService extends AbstractLocalService implements XPat
                     throw new XMLDBException(ErrorCodes.PERMISSION_DENIED,
                             "Permission denied on document");
                 }
-            } while (deadlockCaught);
+                retries--;
+            } while (deadlockCaught && retries >= -1);
         } catch (final EXistException e) {
             if(reservedBroker != null) {
                 reservedBroker.close();
             }
             throw new XMLDBException(ErrorCodes.VENDOR_ERROR, e.getMessage());
         }
+
+        throw new XMLDBException(ErrorCodes.VENDOR_ERROR, "Unable to beginProtected after " + BEGIN_PROTECTED_MAX_LOCKING_RETRIES + " retries");
     }
 	
     /**

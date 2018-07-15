@@ -40,6 +40,7 @@ import org.exist.test.TestConstants;
 import org.exist.util.DatabaseConfigurationException;
 import org.exist.util.FileUtils;
 import org.exist.util.LockException;
+import org.exist.util.XMLFilenameFilter;
 import org.exist.xmldb.XmldbURI;
 import org.junit.After;
 import org.junit.Test;
@@ -47,6 +48,7 @@ import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.fail;
 
 /**
  * Add a larger number of documents into a collection,
@@ -87,7 +89,7 @@ public class RecoveryTest3 {
             assertNotNull(test2);
             broker.saveCollection(transaction, test2);
 
-            final List<Path> files = FileUtils.list(dir);
+            final List<Path> files = FileUtils.list(dir, XMLFilenameFilter.asPredicate());
             assertNotNull(files);
 
             // store some documents.
@@ -98,8 +100,7 @@ public class RecoveryTest3 {
                     assertNotNull(info);
                     test2.store(transaction, broker, info, new InputSource(f.toUri().toASCIIString()));
                 } catch (final SAXException e) {
-                    //TODO : why store invalid documents ?
-                    System.err.println("Error found while parsing document: " + FileUtils.fileName(f) + ": " + e.getMessage());
+                    fail("Error found while parsing document: " + FileUtils.fileName(f) + ": " + e.getMessage());
                 }
             }
 
@@ -117,39 +118,38 @@ public class RecoveryTest3 {
         try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
 
             BrokerPool.FORCE_CORRUPTION = true;
-            Collection root;
 
-            try (final Txn transaction = transact.beginTransaction()) {
-
-                root = broker.openCollection(TestConstants.TEST_COLLECTION_URI, LockMode.WRITE_LOCK);
+            try (final Txn transaction = transact.beginTransaction();
+                    final Collection root = broker.openCollection(TestConstants.TEST_COLLECTION_URI, LockMode.WRITE_LOCK)) {
                 assertNotNull(root);
-                transaction.registerLock(root.getLock(), LockMode.WRITE_LOCK);
+                transaction.acquireCollectionLock(() -> broker.getBrokerPool().getLockManager().acquireCollectionWriteLock(root.getURI()));
                 broker.removeCollection(transaction, root);
 
                 transact.commit(transaction);
             }
 
-            try (final Txn transaction = transact.beginTransaction()) {
-
-                root = broker.getOrCreateCollection(transaction, TestConstants.TEST_COLLECTION_URI);
+            try (final Txn transaction = transact.beginTransaction();
+                    final Collection root = broker.getOrCreateCollection(transaction, TestConstants.TEST_COLLECTION_URI)) {
                 assertNotNull(root);
                 broker.saveCollection(transaction, root);
 
-                Collection test2 = broker.getOrCreateCollection(transaction, TestConstants.TEST_COLLECTION_URI2);
-                assertNotNull(test2);
-                broker.saveCollection(transaction, test2);
+                //TODO(AR) needs write lock
+                try(final Collection test2 = broker.getOrCreateCollection(transaction, TestConstants.TEST_COLLECTION_URI2)) {
+                    assertNotNull(test2);
+                    broker.saveCollection(transaction, test2);
 
-                final List<Path> files = FileUtils.list(dir);
+                    final List<Path> files = FileUtils.list(dir, XMLFilenameFilter.asPredicate());
 
-                // store some documents.
-                for (int i = 0; i < files.size() && i < RESOURCE_COUNT; i++) {
-                    final Path f = files.get(i);
-                    try {
-                        final IndexInfo info = test2.validateXMLResource(transaction, broker, XmldbURI.create(FileUtils.fileName(f)), new InputSource(f.toUri().toASCIIString()));
-                        assertNotNull(info);
-                        test2.store(transaction, broker, info, new InputSource(f.toUri().toASCIIString()));
-                    } catch (SAXException e) {
-                        System.err.println("Error found while parsing document: " + FileUtils.fileName(f) + ": " + e.getMessage());
+                    // store some documents.
+                    for (int i = 0; i < files.size() && i < RESOURCE_COUNT; i++) {
+                        final Path f = files.get(i);
+                        try {
+                            final IndexInfo info = test2.validateXMLResource(transaction, broker, XmldbURI.create(FileUtils.fileName(f)), new InputSource(f.toUri().toASCIIString()));
+                            assertNotNull(info);
+                            test2.store(transaction, broker, info, new InputSource(f.toUri().toASCIIString()));
+                        } catch (SAXException e) {
+                            fail("Error found while parsing document: " + FileUtils.fileName(f) + ": " + e.getMessage());
+                        }
                     }
                 }
 

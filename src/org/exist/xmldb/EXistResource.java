@@ -20,6 +20,7 @@
 package org.exist.xmldb;
 
 import java.util.Date;
+import java.util.Properties;
 
 import org.exist.security.Permission;
 import org.w3c.dom.DocumentType;
@@ -27,13 +28,15 @@ import org.xml.sax.ext.LexicalHandler;
 import org.xmldb.api.base.Resource;
 import org.xmldb.api.base.XMLDBException;
 
+import javax.annotation.Nullable;
+
 /**
  * Defines additional methods implemented by XML and binary
  * resources.
  *
  * @author wolf
  */
-public interface EXistResource extends Resource {
+public interface EXistResource extends Resource, AutoCloseable {
 
     Date getCreationTime() throws XMLDBException;
 
@@ -41,6 +44,11 @@ public interface EXistResource extends Resource {
 
     Permission getPermissions() throws XMLDBException;
 
+    /**
+     * The content length if known.
+     *
+     * @return The content length, or -1 if not known.
+     */
     long getContentLength() throws XMLDBException;
 
     void setLexicalHandler(LexicalHandler handler);
@@ -56,4 +64,13 @@ public interface EXistResource extends Resource {
     void setLastModificationTime(Date lastModificationTime) throws XMLDBException;
 
     void freeResources() throws XMLDBException;
+
+    void setProperties(Properties properties);
+
+    @Nullable Properties getProperties();
+
+    boolean isClosed();
+
+    @Override
+    void close() throws XMLDBException;
 }

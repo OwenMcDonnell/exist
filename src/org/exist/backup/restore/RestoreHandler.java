@@ -33,18 +33,23 @@ import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.exist.EXistException;
 import org.exist.Namespaces;
 import org.exist.backup.BackupDescriptor;
 import org.exist.backup.restore.listener.RestoreListener;
 import org.exist.dom.persistent.DocumentTypeImpl;
 import org.exist.security.ACLPermission.ACE_ACCESS_TYPE;
 import org.exist.security.ACLPermission.ACE_TARGET;
+import org.exist.security.AuthenticationException;
 import org.exist.security.SecurityManager;
+import org.exist.security.Subject;
+import org.exist.storage.BrokerPool;
 import org.exist.util.EXistInputSource;
-import org.exist.xmldb.CollectionImpl;
-import org.exist.xmldb.CollectionManagementServiceImpl;
+import org.exist.xmldb.EXistCollection;
+import org.exist.xmldb.EXistCollectionManagementService;
 import org.exist.xmldb.EXistResource;
 import org.exist.xmldb.XmldbURI;
+import org.exist.xmldb.txn.bridge.InTxnLocalCollection;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.util.URIUtils;
 import org.exist.xquery.value.DateTimeValue;
@@ -55,6 +60,7 @@ import org.xml.sax.XMLReader;
 import org.xml.sax.helpers.DefaultHandler;
 import org.xmldb.api.DatabaseManager;
 import org.xmldb.api.base.Collection;
+import org.xmldb.api.base.ErrorCodes;
 import org.xmldb.api.base.Resource;
 import org.xmldb.api.base.XMLDBException;
 import org.xmldb.api.modules.CollectionManagementService;
@@ -84,7 +90,7 @@ public class RestoreHandler extends DefaultHandler {
     
     //handler state
     private int version = 0;
-    private CollectionImpl currentCollection;
+    private EXistCollection currentCollection;
     private Stack<DeferredPermission> deferredPermissions = new Stack<DeferredPermission>();
     
     
@@ -210,10 +216,10 @@ public class RestoreHandler extends DefaultHandler {
             return deferredPermission;
             
         } catch(final Exception e) {
-            final String msg = "An unrecoverable error occurred while restoring\ncollection '" + name + "'. " + "Aborting restore!";
+            final String msg = "An unrecoverable error occurred while restoring\ncollection '" + name + "': "  + e.getMessage() + ". Aborting restore!";
             LOG.error(msg, e);
             listener.warn(msg);
-            throw new SAXException(e.getMessage(), e);
+            throw new SAXException(msg, e);
         }
     }
 
@@ -356,14 +362,10 @@ public class RestoreHandler extends DefaultHandler {
                 ((EXistResource)res).setMimeType(mimetype);
             }
 
-            if(is.getByteStreamLength() > 0) {
+            if(is.getByteStreamLength() > 0 || "BinaryResource".equals(type)) {
                 res.setContent(is);
             } else {
-                if("BinaryResource".equals(type)) {
-                    res.setContent("");
-                } else {
-                    res = null;
-                }
+                res = null;
             }
 
             // Restoring name
@@ -493,7 +495,7 @@ public class RestoreHandler extends DefaultHandler {
         return date_created;
     }
     
-    private CollectionImpl mkcol(final XmldbURI collPath, final Date created) throws XMLDBException, URISyntaxException {
+    private EXistCollection mkcol(final XmldbURI collPath, final Date created) throws XMLDBException, URISyntaxException {
         final XmldbURI[] allSegments = collPath.getPathSegments();
         final XmldbURI[] segments = Arrays.copyOfRange(allSegments, 1, allSegments.length); //drop the first 'db' segment
         final XmldbURI dbUri;
@@ -504,17 +506,46 @@ public class RestoreHandler extends DefaultHandler {
             dbUri = XmldbURI.xmldbUriFor(dbBaseUri);
         }
         
-        CollectionImpl current = (CollectionImpl)DatabaseManager.getCollection(dbUri.toString(), dbUsername, dbPassword);
+        EXistCollection current = (EXistCollection)DatabaseManager.getCollection(dbUri.toString(), dbUsername, dbPassword);
         XmldbURI p = XmldbURI.ROOT_COLLECTION_URI;
         
         for(final XmldbURI segment : segments) {
             p = p.append(segment);
             final XmldbURI xmldbURI = dbUri.resolveCollectionPath(p);
-            CollectionImpl c = (CollectionImpl)DatabaseManager.getCollection(xmldbURI.toString(), dbUsername, dbPassword);
+            EXistCollection c = null;
+
+            final boolean localConnection = xmldbURI.startsWith(XmldbURI.EMBEDDED_SERVER_URI) || xmldbURI.startsWith("xmldb:exist:///");
+
+            if(localConnection) {
+                //short-cut to an XMLDB Collection that can be used with the current transaction
+                try {
+                    final BrokerPool pool = BrokerPool.getInstance();
+                    final SecurityManager securityManager = pool.getSecurityManager();
+                    final Subject subject = securityManager.authenticate(dbUsername, dbPassword);
+                    try {
+                        c = new InTxnLocalCollection(subject, pool, null, xmldbURI);
+                    } catch(final XMLDBException e) {
+                        if(e.errorCode == ErrorCodes.NO_SUCH_COLLECTION) {
+                            c = null; //no such collection, will be created below
+                        } else {
+                            throw e;
+                        }
+                    }
+                } catch(final AuthenticationException e) {
+                    throw new XMLDBException(ErrorCodes.PERMISSION_DENIED, e.getMessage(), e);
+                } catch(final EXistException e) {
+                    throw new XMLDBException(ErrorCodes.VENDOR_ERROR, e.getMessage(), e);
+                }
+            } else {
+                c = (EXistCollection)DatabaseManager.getCollection(xmldbURI.toString(), dbUsername, dbPassword);
+            }
+
             if(c == null) {
             	current.setTriggersEnabled(false);
-                final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl)current.getService("CollectionManagementService", "1.0");
-                c = (CollectionImpl)mgtService.createCollection(segment, created);
+
+                final EXistCollectionManagementService mgtService = (EXistCollectionManagementService)current.getService("CollectionManagementService", "1.0");
+                c = (EXistCollection)mgtService.createCollection(segment, created);
+
                 current.setTriggersEnabled(true);
             }
             current = c;

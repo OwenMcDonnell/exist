@@ -24,13 +24,11 @@
  */
 package org.exist.util.io;
 
+import com.googlecode.junittoolbox.ParallelParameterized;
 import org.junit.runners.Parameterized.Parameters;
 import java.util.Collection;
 import java.util.Arrays;
 import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
@@ -48,11 +46,11 @@ import static org.junit.Assert.assertArrayEquals;
  *
  * @author Adam Retter <adam.retter@googlemail.com>
  */
-@RunWith(value = Parameterized.class)
+@RunWith(value = ParallelParameterized.class)
 public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
 
     @Parameters
-    public static Collection data() throws IOException {
+    public static Collection data() {
         Object[][] data = new Object[][]{
             {MemoryFilterInputStreamCache.class},
             {MemoryMappedFileFilterInputStreamCache.class},
@@ -85,7 +83,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -145,7 +143,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
         assertEquals(testData[0], cfis.read());
@@ -162,7 +160,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "he";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -187,7 +185,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -208,7 +206,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "hello";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -239,7 +237,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -307,7 +305,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
         final byte result[] = new byte[2];
@@ -326,7 +324,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -347,7 +345,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -381,7 +379,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "hello";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -409,7 +407,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -437,7 +435,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "hello";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -465,7 +463,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -493,7 +491,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -528,7 +526,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -551,7 +549,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -593,7 +591,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -608,7 +606,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -622,7 +620,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -634,7 +632,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
     @Test
     public void available_onEmptyStream() throws IOException, InstantiationException, IllegalAccessException, NoSuchMethodException, IllegalArgumentException, InvocationTargetException {
 
-        final InputStream is = new ByteArrayInputStream(new byte[]{});
+        final InputStream is = new FastByteArrayInputStream(new byte[]{});
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -648,7 +646,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -661,7 +659,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -678,7 +676,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -701,7 +699,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -728,7 +726,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -751,7 +749,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -776,7 +774,7 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
     public void constructed_from_CachingFilterInputStream() throws IOException, InstantiationException, IllegalAccessException, NoSuchMethodException, IllegalArgumentException, InvocationTargetException {
 
         final byte[] testData = generateRandomData(_12KB);
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         //first CachingFilterInputStream
         final CachingFilterInputStream cfis1 = new CachingFilterInputStream(getNewCache(is));
@@ -878,16 +876,9 @@ public class CachingFilterInputStreamTest_NonMarkableByteArrayInputStream {
     }
 
     private byte[] consumeInputStream(final CachingFilterInputStream is) throws IOException {
-        final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        try {
-            int read = -1;
-            final byte buf[] = new byte[_4KB];
-            while ((read = is.read(buf)) > -1) {
-                baos.write(buf, 0, read);
-            }
+        try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
+            baos.write(is);
             return baos.toByteArray();
-        } finally {
-            baos.close();
         }
     }
 

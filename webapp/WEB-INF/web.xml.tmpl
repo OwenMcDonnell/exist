@@ -47,8 +47,28 @@
             <param-value>true</param-value>
         </init-param>
         <init-param>
+            <!--
+            When no user is specified in an XML-RPC request,
+            the guest user account will be used.
+
+            When useDefaultUser is set to false, the guest user
+            is prohibited from accessing the XML-RPC API.
+            -->
             <param-name>useDefaultUser</param-name>
             <param-value>true</param-value>
+        </init-param>
+        <init-param>
+            <!--
+            The Apache XML-RPC servlet does not set a charset
+            in the HTTP response, so the default HTTP charset
+            of ISO-8859-1 is implied.
+
+            We override that to make the default UTF-8 here.
+            You may choose any charset supported by
+            java.nio.charset.Charset
+            -->
+            <param-name>charset</param-name>
+            <param-value>UTF-8</param-value>
         </init-param>
     </servlet>
 
@@ -256,6 +276,13 @@
 			<param-value>false</param-value>
 		</init-param>
         -->
+
+        <!-- When true and attempting basic authentication with
+             the client, a challenge will always be sent -->
+        <init-param>
+            <param-name>send-challenge</param-name>
+            <param-value>true</param-value>
+        </init-param>
     </servlet>
 
     <!--
@@ -272,14 +299,6 @@
         <servlet-class>org.exist.security.realm.oauth.OAuthServlet</servlet-class>
     </servlet>
     -->
-
-    <!--
-        Atom Publishing Protocol.
-    -->
-    <servlet>
-        <servlet-name>AtomServlet</servlet-name>
-        <servlet-class>org.exist.atom.http.AtomServlet</servlet-class>
-    </servlet>
 
     <!--
         EXQuery - RESTXQ

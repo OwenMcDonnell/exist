@@ -19,18 +19,15 @@
  */
 package org.exist.xquery.util;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.ConnectException;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
-import java.net.URISyntaxException;
+import java.net.*;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.Namespaces;
 import org.exist.dom.persistent.DocumentImpl;
+import org.exist.dom.persistent.LockedDocument;
 import org.exist.dom.persistent.NodeProxy;
 import org.exist.dom.memtree.SAXAdapter;
 import org.exist.security.Permission;
@@ -38,8 +35,10 @@ import org.exist.security.PermissionDeniedException;
 import org.exist.storage.BrokerPool;
 import org.exist.storage.lock.Lock.LockMode;
 import org.exist.xmldb.XmldbURI;
+import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
+import org.exist.xquery.value.AnyURIValue;
 import org.exist.xquery.value.Sequence;
 import org.exist.source.Source;
 import org.exist.source.SourceFactory;
@@ -50,6 +49,8 @@ import org.xml.sax.SAXException;
 import org.xml.sax.SAXNotRecognizedException;
 import org.xml.sax.SAXNotSupportedException;
 import org.xml.sax.XMLReader;
+
+import javax.annotation.Nullable;
 
 /**
  * Utilities for XPath doc related functions
@@ -66,6 +67,7 @@ public class DocUtils {
         return getDocumentByPath(context, path);
     }
 
+    //TODO(AR) could make this much more efficient... it doesn't need to actually retrieve the document!
     public static boolean isDocumentAvailable(final XQueryContext context, final String path) throws XPathException {
         try {
             final Sequence seq = getDocumentByPath(context, path);
@@ -77,12 +79,36 @@ public class DocUtils {
     }
 
     private static Sequence getDocumentByPath(final XQueryContext context, final String path) throws XPathException, PermissionDeniedException {
-        if (path.matches("^[a-z]+:.*") && !path.startsWith("xmldb:")) {
-            /* URL */
-            return getDocumentByPathFromURL(context, path);
-        } else {
-            /* Database documents */
-            return getDocumentByPathFromDB(context, path);
+        Sequence doc = getFromDynamicallyAvailableDocuments(context, path);
+        if (doc == null) {
+            if (path.matches("^[a-z]+:.*") && !path.startsWith("xmldb:")) {
+                /* URL */
+                doc = getDocumentByPathFromURL(context, path);
+            } else {
+                /* Database documents */
+                doc = getDocumentByPathFromDB(context, path);
+            }
+        }
+
+        return doc;
+    }
+
+    private static @Nullable Sequence getFromDynamicallyAvailableDocuments(final XQueryContext context, final String path) throws XPathException {
+        try {
+            URI uri = new URI(path);
+            if (!uri.isAbsolute()) {
+                final AnyURIValue baseXdmUri = context.getBaseURI();
+                if (baseXdmUri != null && !baseXdmUri.equals(AnyURIValue.EMPTY_URI)) {
+                    URI baseUri = baseXdmUri.toURI();
+                    if (!baseUri.toString().endsWith("/")) {
+                        baseUri = new URI(baseUri.toString() + '/');
+                    }
+                    uri = baseUri.resolve(uri);
+                }
+            }
+            return context.getDynamicallyAvailableDocument(uri.toString());
+        } catch (final URISyntaxException e) {
+            throw new XPathException(context.getRootExpression(), ErrorCodes.FODC0005, e);
         }
     }
 
@@ -91,6 +117,10 @@ public class DocUtils {
             /* URL */
         try {
             final Source source = SourceFactory.getSource(context.getBroker(), "", path, false);
+            if (source == null) {
+                return Sequence.EMPTY_SEQUENCE;
+            }
+
             try (final InputStream is = source.getInputStream()) {
                 if (source instanceof URLSource) {
                     final int responseCode = ((URLSource) source).getResponseCode();
@@ -125,12 +155,7 @@ public class DocUtils {
         } catch (final SAXException e) {
             throw new XPathException("An error occurred while parsing " + path + ": " + e.getMessage(), e);
         } catch (final IOException e) {
-            // Special case: FileNotFoundException
-            if (e instanceof FileNotFoundException) {
-                return Sequence.EMPTY_SEQUENCE;
-            } else {
-                throw new XPathException("An error occurred while parsing " + path + ": " + e.getMessage(), e);
-            }
+            throw new XPathException("An error occurred while parsing " + path + ": " + e.getMessage(), e);
         } finally {
             if (reader != null) {
                 context.getBroker().getBrokerPool().getParserPool().returnXMLReader(reader);
@@ -141,7 +166,6 @@ public class DocUtils {
     private static Sequence getDocumentByPathFromDB(final XQueryContext context, final String path) throws XPathException, PermissionDeniedException {
         // check if the loaded documents should remain locked
         final LockMode lockType = context.lockDocumentsOnLoad() ? LockMode.WRITE_LOCK : LockMode.READ_LOCK;
-        DocumentImpl doc = null;
         try {
             XmldbURI pathUri = XmldbURI.xmldbUriFor(path, false);
 
@@ -160,27 +184,24 @@ public class DocUtils {
             }
 
             // try to open the document and acquire a lock
-            doc = context.getBroker().getXMLResource(pathUri, lockType);
-            if (doc == null) {
-                return Sequence.EMPTY_SEQUENCE;
-            } else {
-                if (!doc.getPermissions().validate(context.getSubject(), Permission.READ)) {
-                    throw new PermissionDeniedException("Insufficient privileges to read resource " + path);
-                }
+            try(final LockedDocument lockedDoc = context.getBroker().getXMLResource(pathUri, lockType)){
+                if (lockedDoc == null) {
+                    return Sequence.EMPTY_SEQUENCE;
+                } else {
+                    final DocumentImpl doc = lockedDoc.getDocument();
+                    if (!doc.getPermissions().validate(context.getSubject(), Permission.READ)) {
+                        throw new PermissionDeniedException("Insufficient privileges to read resource " + path);
+                    }
 
-                if (doc.getResourceType() == DocumentImpl.BINARY_FILE) {
-                    throw new XPathException("Document " + path + " is a binary resource, not an XML document. Please consider using the function util:binary-doc() to retrieve a reference to it.");
-                }
+                    if (doc.getResourceType() == DocumentImpl.BINARY_FILE) {
+                        throw new XPathException("Document " + path + " is a binary resource, not an XML document. Please consider using the function util:binary-doc() to retrieve a reference to it.");
+                    }
 
-                return new NodeProxy(doc);
+                    return new NodeProxy(doc);
+                }
             }
         } catch (final URISyntaxException e) {
             throw new XPathException(e);
-        } finally {
-            // release all locks unless
-            if (doc != null) {
-                doc.getUpdateLock().release(lockType);
-            }
         }
     }
 

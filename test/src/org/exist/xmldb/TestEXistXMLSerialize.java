@@ -21,14 +21,16 @@
  */
 package org.exist.xmldb;
 
-import org.exist.TestUtils;
 import org.exist.security.Account;
 import org.exist.test.ExistXmldbEmbeddedServer;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.junit.ClassRule;
 import org.xmldb.api.modules.CollectionManagementService;
 import java.io.IOException;
 import java.io.StringWriter;
-import java.nio.file.Path;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Paths;
 import java.util.Properties;
 import javax.xml.parsers.ParserConfigurationException;
 
@@ -40,7 +42,6 @@ import javax.xml.transform.stream.StreamResult;
 
 import org.apache.xml.serialize.OutputFormat;
 import org.apache.xml.serialize.XMLSerializer;
-import org.apache.commons.io.output.ByteArrayOutputStream;
 
 import org.exist.util.serializer.DOMSerializer;
 import org.exist.util.serializer.SAXSerializer;
@@ -83,7 +84,7 @@ public class TestEXistXMLSerialize {
 		"<p><xsl:value-of select=\"$testparam\"/>: <xsl:apply-templates/></p></xsl:template>" +
 		"</xsl:stylesheet>";
     
-    private final static Path testFile = TestUtils.getEXistHome().get().resolve("test/src/org/exist/xmldb/PerformanceTest.xml").normalize();
+    private final URL testFile = getClass().getResource("PerformanceTest.xml");
 
     private final static String TEST_COLLECTION = "testXmlSerialize";
 
@@ -106,12 +107,12 @@ public class TestEXistXMLSerialize {
     }
 
     @Test
-    public void serialize1() throws TransformerException, XMLDBException, ParserConfigurationException, SAXException, IOException {
+    public void serialize1() throws TransformerException, XMLDBException, ParserConfigurationException, SAXException, IOException, URISyntaxException {
         Collection testCollection = DatabaseManager.getCollection(ROOT_URI + "/" + TEST_COLLECTION);
         XMLResource resource = (XMLResource) testCollection.createResource(null, "XMLResource");
 
         Document doc = javax.xml.parsers.DocumentBuilderFactory.newInstance( ).
-                        newDocumentBuilder().parse(testFile.toFile());
+                        newDocumentBuilder().parse(Paths.get(testFile.toURI()).toFile());
 
         resource.setContentAsDOM(doc);
         testCollection.storeResource(resource);
@@ -123,17 +124,18 @@ public class TestEXistXMLSerialize {
 
         //Attempting serialization
         DOMSource source = new DOMSource(node);
-        ByteArrayOutputStream out = new ByteArrayOutputStream( );
-        StreamResult result = new StreamResult(out);
+        try (final FastByteArrayOutputStream out = new FastByteArrayOutputStream()) {
+            StreamResult result = new StreamResult(out);
 
-        Transformer xformer = TransformerFactory.newInstance().newTransformer();
-        xformer.transform(source, result);
+            Transformer xformer = TransformerFactory.newInstance().newTransformer();
+            xformer.transform(source, result);
+        }
     }
 
     @Test
-    public void serialize2() throws ParserConfigurationException, SAXException, IOException, XMLDBException {
+    public void serialize2() throws ParserConfigurationException, SAXException, IOException, XMLDBException, URISyntaxException {
         Collection testCollection = DatabaseManager.getCollection(ROOT_URI + "/" + TEST_COLLECTION);
-        Document doc = javax.xml.parsers.DocumentBuilderFactory.newInstance( ).newDocumentBuilder().parse(testFile.toFile());
+        Document doc = javax.xml.parsers.DocumentBuilderFactory.newInstance( ).newDocumentBuilder().parse(Paths.get(testFile.toURI()).toFile());
         XMLResource resource = (XMLResource) testCollection.createResource(null, "XMLResource");
         resource.setContentAsDOM(doc);
         testCollection.storeResource(resource);
@@ -146,22 +148,23 @@ public class TestEXistXMLSerialize {
         format.setLineWidth(0);
         format.setIndent(5);
         format.setPreserveSpace(true);
-        ByteArrayOutputStream out = new ByteArrayOutputStream( );
-        XMLSerializer serializer = new XMLSerializer(out, format);
+        try (final FastByteArrayOutputStream out = new FastByteArrayOutputStream()) {
+            XMLSerializer serializer = new XMLSerializer(out, format);
 
-        if(node instanceof Document){
-            serializer.serialize((Document) node);
-        }else if(node instanceof Element){
-            serializer.serialize((Element) node);
-        }else{
-            fail("Can't serialize node type: "+node);
+            if (node instanceof Document) {
+                serializer.serialize((Document) node);
+            } else if (node instanceof Element) {
+                serializer.serialize((Element) node);
+            } else {
+                fail("Can't serialize node type: " + node);
+            }
         }
     }
 
     @Test
-    public void serialize3() throws ParserConfigurationException, SAXException, IOException, XMLDBException, TransformerException {
+    public void serialize3() throws ParserConfigurationException, SAXException, IOException, XMLDBException, TransformerException, URISyntaxException {
         Collection testCollection = DatabaseManager.getCollection(ROOT_URI + "/" + TEST_COLLECTION);
-        Document doc = javax.xml.parsers.DocumentBuilderFactory.newInstance( ).newDocumentBuilder().parse(testFile.toFile());
+        Document doc = javax.xml.parsers.DocumentBuilderFactory.newInstance( ).newDocumentBuilder().parse(Paths.get(testFile.toURI()).toFile());
         XMLResource resource = (XMLResource) testCollection.createResource(null, "XMLResource");
         resource.setContentAsDOM(doc);
         testCollection.storeResource(resource);
@@ -178,10 +181,10 @@ public class TestEXistXMLSerialize {
     }
 
     @Test
-    public void serialize4() throws ParserConfigurationException, SAXException, IOException, XMLDBException {
+    public void serialize4() throws ParserConfigurationException, SAXException, IOException, XMLDBException, URISyntaxException {
         Collection testCollection = DatabaseManager.getCollection(ROOT_URI + "/" + TEST_COLLECTION);
 
-        Document doc = javax.xml.parsers.DocumentBuilderFactory.newInstance( ).newDocumentBuilder().parse(testFile.toFile());
+        Document doc = javax.xml.parsers.DocumentBuilderFactory.newInstance( ).newDocumentBuilder().parse(Paths.get(testFile.toURI()).toFile());
         XMLResource resource = (XMLResource) testCollection.createResource(null, "XMLResource");
         resource.setContentAsDOM(doc);
 

@@ -21,7 +21,6 @@
  */
 package org.exist.xquery.modules.file;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -106,9 +105,8 @@ public class FileRead extends BasicFunction {
 			encoding = StandardCharsets.UTF_8;
 		}
 
-		try(final ByteArrayOutputStream os = new ByteArrayOutputStream()) {
-			Files.copy(file, os);
-            return new StringValue(new String(os.toByteArray(), encoding));
+		try {
+            return new StringValue(new String(Files.readAllBytes(file), encoding));
 		} catch(final IOException e ) {
 			throw new XPathException(this, e);	
 		}

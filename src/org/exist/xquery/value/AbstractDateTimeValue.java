@@ -359,9 +359,8 @@ public abstract class AbstractDateTimeValue extends ComputableValue {
             }
             return r;
         }
-        throw new XPathException(
-                "Type error: cannot compare " + Type.getTypeName(getType()) + " to "
-                        + Type.getTypeName(other.getType()));
+        throw new XPathException(ErrorCodes.XPTY0004, "Type error: cannot compare " + Type.getTypeName(getType())
+                + " to " + Type.getTypeName(other.getType()));
     }
 
     public AtomicValue max(Collator collator, AtomicValue other) throws XPathException {
@@ -463,6 +462,14 @@ public abstract class AbstractDateTimeValue extends ComputableValue {
         return calendar.hashCode();
     }
 
+    /**
+     * Get's the numeric day of the week.
+     *
+     * Note that numbering starts from {@link Calendar#SUNDAY} which
+     * is day 1.
+     *
+     * @return the day of the week.
+     */
     public int getDayOfWeek() {
         return calendar.toGregorianCalendar().get(Calendar.DAY_OF_WEEK);
     }

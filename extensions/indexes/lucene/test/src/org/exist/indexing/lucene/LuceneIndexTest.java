@@ -75,7 +75,7 @@ public class LuceneIndexTest {
 
     protected static String XUPDATE_END =
         "</xu:modifications>";
-    
+
     private static final String XML1 =
             "<section>" +
             "   <head>The title in big letters</head>" +
@@ -389,7 +389,7 @@ public class LuceneIndexTest {
             seq = xquery.execute(broker, "/article[ft:query(., 'note')]", null);
             assertNotNull(seq);
             assertEquals(0, seq.getItemCount());
-            
+
             seq = xquery.execute(broker, "/article[ft:query(., 'ignore')]", null);
             assertNotNull(seq);
             assertEquals(0, seq.getItemCount());
@@ -494,7 +494,7 @@ public class LuceneIndexTest {
 
             final XQueryContext context = new XQueryContext(broker.getBrokerPool());
             final CompiledXQuery compiled = xquery.compile(broker, context, "declare variable $q external; " +
-                    "ft:query(//p, util:parse($q)/query)");
+                    "ft:query(//p, parse-xml($q)/query)");
 
             context.declareVariable("q", "<query><term>heiterkeit</term></query>");
             Sequence seq = xquery.execute(broker, compiled, null);
@@ -733,11 +733,11 @@ public class LuceneIndexTest {
             root = broker.getOrCreateCollection(transaction, TestConstants.TEST_COLLECTION_URI);
             assertNotNull(root);
             broker.saveCollection(transaction, root);
-            
+
             transact.commit(transaction);
 
             root = null;
-            
+
             checkIndex(docs, broker, null, null, 0);
         }
     }
@@ -746,9 +746,11 @@ public class LuceneIndexTest {
     public void reindex() throws EXistException, CollectionConfigurationException, PermissionDeniedException, SAXException, LockException, IOException, QName.IllegalQNameException {
         final DocumentSet docs = configureAndStore(COLLECTION_CONFIG1, XML1, "dropDocument.xml");
         final BrokerPool pool = existEmbeddedServer.getBrokerPool();
-        try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
+        final TransactionManager transact = pool.getTransactionManager();
+        try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()));
+                final Txn transaction = transact.beginTransaction()) {
 
-            broker.reindexCollection(TestConstants.TEST_COLLECTION_URI);
+            broker.reindexCollection(transaction, TestConstants.TEST_COLLECTION_URI);
 
             checkIndex(docs, broker, new QName[] { new QName("head") }, "title", 1);
             final Occurrences[] o = checkIndex(docs, broker, new QName[]{new QName("p")}, "with", 1);
@@ -759,6 +761,8 @@ public class LuceneIndexTest {
             final QName attrQN = new QName("rend", XMLConstants.NULL_NS_URI, ElementValue.ATTRIBUTE);
             checkIndex(docs, broker, new QName[] { attrQN }, null, 2);
             checkIndex(docs, broker, new QName[] { attrQN }, "center", 1);
+
+            transaction.commit();
         }
     }
 
@@ -1180,7 +1184,7 @@ public class LuceneIndexTest {
             docs.add(info.getDocument());
             transact.commit(transaction);
         }
-        
+
         return docs;
     }
 
@@ -1213,7 +1217,7 @@ public class LuceneIndexTest {
             }
             transact.commit(transaction);
         }
-        
+
         return docs;
     }
 
@@ -1290,4 +1294,3 @@ public class LuceneIndexTest {
         TestUtils.cleanupDB();
     }
 }
-

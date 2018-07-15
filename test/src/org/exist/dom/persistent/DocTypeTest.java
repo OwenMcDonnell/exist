@@ -1,10 +1,14 @@
 package org.exist.dom.persistent;
 
+import com.googlecode.junittoolbox.ParallelRunner;
 import org.exist.EXistException;
 import org.exist.collections.triggers.TriggerException;
 import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -24,6 +28,7 @@ import org.exist.test.ExistEmbeddedServer;
 import org.exist.util.*;
 import org.exist.xmldb.XmldbURI;
 import org.junit.*;
+import org.junit.runner.RunWith;
 import org.w3c.dom.DocumentType;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
@@ -38,6 +43,7 @@ import static org.junit.Assert.assertTrue;
  * @author wolf
  *
  */
+@RunWith(ParallelRunner.class)
 public class DocTypeTest {
 
 	public final static Properties OUTPUT_PROPERTIES = new Properties();
@@ -62,14 +68,13 @@ public class DocTypeTest {
 	private static Collection root = null;
 
     @Test
-	public void docType_usingInputSource() throws Exception{
-		DocumentImpl doc = null;
+	public void docType_usingInputSource() throws EXistException, URISyntaxException, LockException, SAXException, PermissionDeniedException, IOException {
 		final BrokerPool pool = existEmbeddedServer.getBrokerPool();
 		final TransactionManager transact = pool.getTransactionManager();
 
 		try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
-			final Optional<Path> existHome = pool.getConfiguration().getExistHome();
-			final Path testFile = FileUtils.resolve(existHome, "test/src/org/exist/dom/persistent/test_content.xml");
+            final URL testFileUrl = getClass().getResource("test_content.xml");
+			final Path testFile = Paths.get(testFileUrl.toURI());
 			assertTrue(Files.isReadable(testFile));
 			
 			final InputSource is = new FileInputSource(testFile);
@@ -83,35 +88,30 @@ public class DocTypeTest {
                 transact.commit(transaction);
             }
 
-			doc = broker.getXMLResource(root.getURI().append(XmldbURI.create("test2.xml")),LockMode.READ_LOCK);
+			try(final LockedDocument lockedDoc = broker.getXMLResource(root.getURI().append(XmldbURI.create("test2.xml")),LockMode.READ_LOCK)) {
+			    final DocumentImpl doc = lockedDoc.getDocument();
+                final DocumentType docType = doc.getDoctype();
+                assertNotNull(docType);
+                assertEquals("-//OASIS//DTD DITA Reference//EN", docType.getPublicId());
 
-			final DocumentType docType = doc.getDoctype();
-			assertNotNull(docType);
-			assertEquals("-//OASIS//DTD DITA Reference//EN", docType.getPublicId());
-			
-			final Serializer serializer = broker.getSerializer();
-			serializer.reset();
-			
-			serializer.setProperties(OUTPUT_PROPERTIES);
-			
-			final String serialized = serializer.serialize(doc);
+                final Serializer serializer = broker.getSerializer();
+                serializer.reset();
 
-			assertTrue("Checking for Public Id in output", serialized.contains("-//OASIS//DTD DITA Reference//EN"));
+                serializer.setProperties(OUTPUT_PROPERTIES);
 
-		} finally {
-		    if (doc != null) {
-                doc.getUpdateLock().release(LockMode.READ_LOCK);
+                final String serialized = serializer.serialize(doc);
+
+                assertTrue("Checking for Public Id in output", serialized.contains("-//OASIS//DTD DITA Reference//EN"));
             }
 		}
 	}
 
     @Test
-	public void docType_usingString() throws Exception{
-		DocumentImpl doc = null;
+	public void docType_usingString() throws EXistException, PermissionDeniedException, SAXException {
         final BrokerPool pool = existEmbeddedServer.getBrokerPool();
-		try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()))) {
-
-            doc = broker.getXMLResource(root.getURI().append(XmldbURI.create("test.xml")), LockMode.READ_LOCK);
+		try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()));
+                final LockedDocument lockedDoc = broker.getXMLResource(root.getURI().append(XmldbURI.create("test.xml")),LockMode.READ_LOCK)) {
+            final DocumentImpl doc = lockedDoc.getDocument();
 
             DocumentType docType = doc.getDoctype();
 
@@ -128,11 +128,7 @@ public class DocTypeTest {
 
             assertTrue("Checking for Public Id in output", serialized.contains("-//OASIS//DTD DITA Topic//EN"));
 
-        } finally {
-		    if (doc != null) {
-                doc.getUpdateLock().release(LockMode.READ_LOCK);
-            }
-		}
+        }
 	}
 
     @ClassRule

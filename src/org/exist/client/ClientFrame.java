@@ -76,6 +76,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
 
@@ -704,7 +705,7 @@ public class ClientFrame extends JFrame implements WindowFocusListener, KeyListe
                     final ResourceDescriptor resource = res[i];
                     if (resource.isCollection()) {
                         try {
-                            final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) removeRootCollection
+                            final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) removeRootCollection
                                     .getService(
                                             "CollectionManagementService", //$NON-NLS-1$
                                             "1.0"); //$NON-NLS-1$
@@ -769,7 +770,7 @@ public class ClientFrame extends JFrame implements WindowFocusListener, KeyListe
         final XmldbURI destinationPath = ((PrettyXmldbURI) val).getTargetURI();
         final Runnable moveTask = () -> {
             try {
-                final CollectionManagementServiceImpl service = (CollectionManagementServiceImpl)
+                final EXistCollectionManagementService service = (EXistCollectionManagementService)
                         client.current.getService("CollectionManagementService", "1.0"); //$NON-NLS-1$ //$NON-NLS-2$
                 for (int i = 0; i < res.length; i++) {
                     setStatus(Messages.getString("ClientFrame.115") + res[i].getName() + Messages.getString("ClientFrame.116") + destinationPath + Messages.getString("ClientFrame.117")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -811,7 +812,7 @@ public class ClientFrame extends JFrame implements WindowFocusListener, KeyListe
         final XmldbURI destinationFilename = parseIt;
         final Runnable renameTask = () -> {
             try {
-                final CollectionManagementServiceImpl service = (CollectionManagementServiceImpl)
+                final EXistCollectionManagementService service = (EXistCollectionManagementService)
                         client.current.getService("CollectionManagementService", "1.0"); //$NON-NLS-1$ //$NON-NLS-2$
                 for (int i = 0; i < res.length; i++) {
                     setStatus(Messages.getString("ClientFrame.124") + res[i].getName() + Messages.getString("ClientFrame.125") + destinationFilename + Messages.getString("ClientFrame.126")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -856,7 +857,7 @@ public class ClientFrame extends JFrame implements WindowFocusListener, KeyListe
 
         final Runnable moveTask = () -> {
             try {
-                final CollectionManagementServiceImpl service = (CollectionManagementServiceImpl)
+                final EXistCollectionManagementService service = (EXistCollectionManagementService)
                         client.current.getService("CollectionManagementService", "1.0"); //$NON-NLS-1$ //$NON-NLS-2$
                 for (int i = 0; i < res.length; i++) {
 
@@ -1132,7 +1133,7 @@ public class ClientFrame extends JFrame implements WindowFocusListener, KeyListe
     }
 
     public static void repairRepository(Collection collection) throws XMLDBException {
-        final XQueryService service = (XQueryService) collection.getService("XQueryService", "1.0");
+        final EXistXQueryService service = (EXistXQueryService) collection.getService("XQueryService", "1.0");
         service.query("import module namespace repair=\"http://exist-db.org/xquery/repo/repair\"\n" +
                 "at \"resource:org/exist/xquery/modules/expathrepo/repair.xql\";\n" +
                 "repair:clean-all(),\n" +
@@ -1251,7 +1252,7 @@ public class ClientFrame extends JFrame implements WindowFocusListener, KeyListe
                 final Permission perm;
                 if (desc.isCollection()) {
                     final Collection coll = collection.getChildCollection(name.toString());
-                    created = ((CollectionImpl) coll).getCreationTime();
+                    created = ((EXistCollection) coll).getCreationTime();
                     perm = service.getPermissions(coll);
                 } else {
                     final Resource res = collection.getResource(name.toString());
@@ -1424,14 +1425,14 @@ public class ClientFrame extends JFrame implements WindowFocusListener, KeyListe
         }
     }
 
+    private static final AtomicInteger processThreadInitNumber = new AtomicInteger();
     class ProcessThread extends Thread {
-
         private String action = null;
         private boolean terminate = false;
         private boolean status = false;
 
         public ProcessThread() {
-            super();
+            super("exist-ClientFrame.ProcessThread-" + processThreadInitNumber.getAndIncrement());
         }
 
         synchronized public void setAction(final String action) {

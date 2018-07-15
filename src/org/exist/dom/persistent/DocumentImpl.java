@@ -21,21 +21,19 @@
  */
 package org.exist.dom.persistent;
 
+import com.evolvedbinary.j8fu.tuple.Tuple2;
+import net.jcip.annotations.NotThreadSafe;
 import org.exist.EXistException;
 import org.exist.Resource;
+import org.exist.collections.LockedCollection;
 import org.exist.dom.QName;
 import org.exist.dom.QName.IllegalQNameException;
 import org.exist.collections.Collection;
 import org.exist.collections.CollectionConfiguration;
 import org.exist.dom.memtree.DocumentFragmentImpl;
 import org.exist.numbering.NodeId;
-import org.exist.security.ACLPermission;
-import org.exist.security.Account;
-import org.exist.security.Permission;
-import org.exist.security.PermissionDeniedException;
-import org.exist.security.PermissionFactory;
+import org.exist.security.*;
 import org.exist.security.SecurityManager;
-import org.exist.security.UnixStylePermission;
 import org.exist.storage.BrokerPool;
 import org.exist.storage.DBBroker;
 import org.exist.storage.ElementValue;
@@ -43,8 +41,9 @@ import org.exist.storage.NodePath;
 import org.exist.storage.StorageAddress;
 import org.exist.storage.io.VariableByteInput;
 import org.exist.storage.io.VariableByteOutputStream;
-import org.exist.storage.lock.Lock;
-import org.exist.storage.lock.MultiReadReentrantLock;
+import org.exist.storage.lock.EnsureContainerLocked;
+import org.exist.storage.lock.EnsureLocked;
+import org.exist.storage.lock.ManagedDocumentLock;
 import org.exist.storage.txn.Txn;
 import org.exist.util.XMLString;
 import org.exist.xmldb.XmldbURI;
@@ -65,12 +64,16 @@ import org.w3c.dom.NodeList;
 import org.w3c.dom.ProcessingInstruction;
 import org.w3c.dom.Text;
 
+import javax.annotation.Nullable;
 import javax.xml.XMLConstants;
 import java.io.EOFException;
 import java.io.IOException;
+import java.util.Optional;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.exist.dom.QName.Validity.ILLEGAL_FORMAT;
+import static org.exist.storage.lock.Lock.LockMode.READ_LOCK;
+import static org.exist.storage.lock.Lock.LockMode.WRITE_LOCK;
 
 /**
  * Represents a persistent document object in the database;
@@ -78,6 +81,7 @@ import static org.exist.dom.QName.Validity.ILLEGAL_FORMAT;
  *
  * @author Wolfgang Meier <wolfgang@exist-db.org>
  */
+@NotThreadSafe
 public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Document {
 
     public static final int UNKNOWN_DOCUMENT_ID = -1;
@@ -109,13 +113,11 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
     private int docId = UNKNOWN_DOCUMENT_ID;
 
     /**
-     * the document's file name
+     * Just the document's file name
      */
     private XmldbURI fileURI = null;
 
     private Permission permissions = null;
-
-    private transient Lock updateLock = null;
 
     private DocumentMetadata metadata = null;
 
@@ -125,23 +127,48 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @param pool a <code>BrokerPool</code> instance representing the db
      */
     public DocumentImpl(final BrokerPool pool) {
-        this(pool, null, null);
+        this(pool, null, (XmldbURI)null);
     }
 
     /**
-     * Creates a new <code>DocumentImpl</code> instance.
+     * Creates a new persistent Document instance.
      *
-     * @param pool       a <code>BrokerPool</code> instance representing the db
-     * @param collection a <code>Collection</code> value
-     * @param fileURI    a <code>XmldbURI</code> value
+     * @param pool The broker pool
+     * @param collection The Collection which holds this document
+     * @param fileURI The name of the document
      */
     public DocumentImpl(final BrokerPool pool, final Collection collection, final XmldbURI fileURI) {
-        this.pool = pool;
-        this.collection = collection;
-        this.fileURI = fileURI;
+        this(pool, collection, fileURI, PermissionFactory.getDefaultResourcePermission(pool.getSecurityManager()));
+    }
 
-        // the permissions assigned to this document
-        this.permissions = PermissionFactory.getDefaultResourcePermission(pool.getSecurityManager());
+    /**
+     * Creates a new persistent Document instance to replace an existing document instance.
+     *
+     * @param prevDoc The previous Document object that we are overwriting
+     */
+    public DocumentImpl(final DocumentImpl prevDoc) {
+        this(prevDoc.pool, prevDoc.collection, prevDoc.fileURI, prevDoc.permissions.copy());
+    }
+
+    /**
+     * Creates a new persistent Document instance to replace an existing document instance.
+     *
+     * @param pool The broker pool
+     * @param collection The Collection which holds this document
+     * @param prevDoc The previous Document object that we are overwriting
+     */
+    public DocumentImpl(final BrokerPool pool, final Collection collection, final Collection.CollectionEntry prevDoc) {
+        this(pool, collection, prevDoc.getUri().lastSegment(), prevDoc.getPermissions().copy());
+    }
+
+    private DocumentImpl(final BrokerPool pool, final Collection collection, final XmldbURI fileURI, final Permission permissions) {
+        this.pool = pool;
+
+        // NOTE: We must not keep a reference to a LockedCollection in the Document object!
+        this.collection = LockedCollection.unwrapLocked(collection);
+
+        this.fileURI = fileURI;
+        this.permissions = permissions;
 
         //inherit the group to the resource if current collection is setGid
         if(collection != null && collection.getPermissions().isSetGid()) {
@@ -169,17 +196,19 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @return a <code>Collection</code> value
      */
+    @EnsureContainerLocked(mode=READ_LOCK)
     public Collection getCollection() {
         return collection;
     }
 
     /**
-     * The method <code>setCollection</code>
+     * Set the Collection for the document
      *
-     * @param parent a <code>Collection</code> value
+     * @param collection The Collection that the document belongs too
      */
-    public void setCollection(final Collection parent) {
-        this.collection = parent;
+    @EnsureContainerLocked(mode=WRITE_LOCK)
+    public void setCollection(final Collection collection) {
+        this.collection = collection;
     }
 
     /**
@@ -187,6 +216,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @return an <code>int</code> value
      */
+    @EnsureContainerLocked(mode=READ_LOCK)
     public int getDocId() {
         return docId;
     }
@@ -196,6 +226,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @param docId an <code>int</code> value
      */
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void setDocId(final int docId) {
         this.docId = docId;
     }
@@ -213,8 +244,8 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @return a <code>XmldbURI</code> value
      */
+    //@EnsureContainerLocked(mode=READ_LOCK)  // TODO(AR) temporarily we need to allow some unlocked access
     public XmldbURI getFileURI() {
-        //checkAvail();
         return fileURI;
     }
 
@@ -223,10 +254,12 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @param fileURI a <code>XmldbURI</code> value
      */
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void setFileURI(final XmldbURI fileURI) {
         this.fileURI = fileURI;
     }
 
+    //@EnsureContainerLocked(mode=READ_LOCK)  // TODO(AR) temporarily we need to allow some unlocked access
     @Override
     public XmldbURI getURI() {
         if(collection == null) {
@@ -236,11 +269,13 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
         }
     }
 
+    @EnsureContainerLocked(mode=READ_LOCK)
     public boolean isCollectionConfig() {
         return fileURI.endsWith(CollectionConfiguration.COLLECTION_CONFIG_SUFFIX_URI);
     }
 
     @Override
+    @EnsureContainerLocked(mode=READ_LOCK)
     public Permission getPermissions() {
         return permissions;
     }
@@ -253,6 +288,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * and should be removed, move code to copyOf or Constructor
      */
     @Deprecated
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void setPermissions(final Permission perm) {
         permissions = perm;
     }
@@ -265,19 +301,14 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * and should be removed, move code to copyOf or Constructor
      */
     @Deprecated
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void setMetadata(final DocumentMetadata meta) {
         this.metadata = meta;
     }
 
     @Override
+    @EnsureContainerLocked(mode=READ_LOCK)
     public DocumentMetadata getMetadata() {
-        if(metadata == null) {
-            try(final DBBroker broker = pool.getBroker()) {
-                broker.getResourceMetadata(this);
-            } catch(final EXistException e) {
-                LOG.warn("Error while loading document metadata: " + e.getMessage(), e);
-            }
-        }
         return metadata;
     }
 
@@ -292,40 +323,90 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * This is called by {@link Collection} when replacing a document.
      *
      * @param other    a <code>DocumentImpl</code> value
-     * @param preserve Cause copyOf to preserve the following attributes of
-     *                 each source file in the copy: modification time,
-     *                 access time, file mode, user ID, and group ID,
-     *                 as allowed by permissions and  Access Control
-     *                 Lists (ACLs)
+     * @param prev if there was an existing document which we are replacing,
+     *     we will copy the mode, ACL, and birth time from the existing document.
      */
-    public void copyOf(final DocumentImpl other, final boolean preserve) {
+    public void copyOf(final DBBroker broker, final DocumentImpl other, @EnsureLocked(mode=READ_LOCK) @Nullable final DocumentImpl prev) throws PermissionDeniedException {
+        copyOf(broker, other, prev == null ? null : new Tuple2<>(prev.getPermissions(), prev.getMetadata().getCreated()));
+    }
+
+    /**
+     * Copy the relevant internal fields from the specified document object.
+     * This is called by {@link Collection} when replacing a document.
+     *
+     * @param other a <code>DocumentImpl</code> value
+     * @param prev if there was an existing document which we are replacing,
+     *     we will copy the mode, ACL, and birth time from the existing document.
+     */
+    public void copyOf(final DBBroker broker, final DocumentImpl other, @Nullable final Collection.CollectionEntry prev) throws PermissionDeniedException {
+        copyOf(broker, other, prev == null ? null : new Tuple2<>(prev.getPermissions(), prev.getCreated()));
+    }
+
+    /**
+     * Copy the relevant internal fields from the specified document object.
+     * This is called by {@link Collection} when replacing a document.
+     *
+     * @param other    a <code>DocumentImpl</code> value
+     * @param prev A tuple, containing the permissions and birth time of any
+     *     previous document that we are replacing; We will copy the mode, ACL,
+     *     and birth time from the existing document.
+     */
+    @EnsureContainerLocked(mode=WRITE_LOCK)
+    private void copyOf(final DBBroker broker, @EnsureLocked(mode=READ_LOCK) final DocumentImpl other, @Nullable final Tuple2<Permission, Long> prev) throws PermissionDeniedException {
         childAddress = null;
         children = 0;
 
-        //XXX: why reusing? better to create new instance? -shabanovd
         metadata = getMetadata();
-        if(metadata == null) {
+        if (metadata == null) {
             metadata = new DocumentMetadata();
         }
 
         //copy metadata
         metadata.copyOf(other.getMetadata());
 
-        if(preserve) {
-            //copy permission
-            permissions = ((UnixStylePermission) other.permissions).copy();
-            //created and last modified are done by metadata.copyOf
-            //metadata.setCreated(other.getMetadata().getCreated());
-            //metadata.setLastModified(other.getMetadata().getLastModified());
+        final long timestamp = System.currentTimeMillis();
+        if(prev != null) {
+            // replaced file should have same owner user:group as prev file
+            if (permissions.getOwner().getId() != prev._1.getOwner().getId()) {
+                permissions.setOwner(prev.get_1().getOwner());
+            }
+            if (permissions.getGroup().getId() != prev._1.getGroup().getId()) {
+                permissions.setGroup(prev.get_1().getGroup());
+            }
+
+            //copy mode and acl from prev file
+            copyModeAcl(broker, prev._1, permissions);
+
+            // set birth time to same as prev file
+            metadata.setCreated(prev._2);
+
         } else {
-            //update timestamp
-            final long timestamp = System.currentTimeMillis();
+            // copy mode and acl from source file
+            copyModeAcl(broker, other.getPermissions(), permissions);
+
+            // set birth time to the current timestamp
             metadata.setCreated(timestamp);
-            metadata.setLastModified(timestamp);
         }
+
+        // always set mtime
+        metadata.setLastModified(timestamp);
 
         // reset pageCount: will be updated during storage
         metadata.setPageCount(0);
+    }
+
+    private void copyModeAcl(final DBBroker broker, final Permission srcPermissions, final Permission destPermissions) throws PermissionDeniedException {
+        PermissionFactory.chmod(broker, destPermissions, Optional.of(srcPermissions.getMode()), Optional.empty());
+
+        if (srcPermissions instanceof SimpleACLPermission && destPermissions instanceof SimpleACLPermission) {
+            final SimpleACLPermission srcAclPermissions = (SimpleACLPermission)srcPermissions;
+            final SimpleACLPermission destAclPermissions = (SimpleACLPermission)destPermissions;
+            if (!destAclPermissions.equalsAcl(srcAclPermissions)) {
+                PermissionFactory.chacl(destAclPermissions, newAcl ->
+                    ((SimpleACLPermission)newAcl).copyAclOf(srcAclPermissions)
+                );
+            }
+        }
     }
 
     /**
@@ -333,28 +414,10 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @param other a <code>DocumentImpl</code> value
      */
-    public void copyChildren(final DocumentImpl other) {
+    @EnsureContainerLocked(mode=WRITE_LOCK)
+    public void copyChildren(@EnsureLocked(mode=READ_LOCK) final DocumentImpl other) {
         childAddress = other.childAddress;
         children = other.children;
-    }
-
-    /**
-     * Returns true if the document is currently locked for
-     * write.
-     */
-    public synchronized boolean isLockedForWrite() {
-        return getUpdateLock().isLockedForWrite();
-    }
-
-    /**
-     * Returns the update lock associated with this
-     * resource.
-     */
-    public final synchronized Lock getUpdateLock() {
-        if(updateLock == null) {
-            updateLock = new MultiReadReentrantLock(fileURI);
-        }
-        return updateLock;
     }
 
     /**
@@ -362,6 +425,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @param user an <code>User</code> value
      */
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void setUserLock(final Account user) {
         getMetadata().setUserLock(user == null ? 0 : user.getId());
     }
@@ -371,6 +435,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @return an <code>User</code> value
      */
+    @EnsureContainerLocked(mode=READ_LOCK)
     public Account getUserLock() {
         final int lockOwnerId = getMetadata().getUserLock();
         if(lockOwnerId == 0) {
@@ -386,6 +451,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * As an estimation, the number of pages occupied by the document
      * is multiplied with the current page size.
      */
+    @EnsureContainerLocked(mode=READ_LOCK)
     public long getContentLength() {
         final long length = getMetadata().getPageCount() * pool.getPageSize();
         return (length < 0) ? 0 : length;
@@ -458,6 +524,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @param child a <code>NodeHandle</code> value
      * @throws DOMException if an error occurs
      */
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void appendChild(final NodeHandle child) throws DOMException {
         ++children;
         resizeChildList();
@@ -470,11 +537,9 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @param ostream a <code>VariableByteOutputStream</code> value
      * @throws IOException if an error occurs
      */
+    @EnsureContainerLocked(mode=READ_LOCK)
     public void write(final VariableByteOutputStream ostream) throws IOException {
         try {
-            if(!getCollection().isTempCollection() && !getUpdateLock().isLockedForWrite()) {
-                LOG.warn("document not locked for write !");
-            }
             ostream.writeInt(docId);
             ostream.writeUTF(fileURI.toString());
             getPermissions().write(ostream);
@@ -499,6 +564,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @throws IOException  if an error occurs
      * @throws EOFException if an error occurs
      */
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void read(final VariableByteInput istream) throws IOException, EOFException {
         try {
             docId = istream.readInt();
@@ -510,57 +576,10 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
             for(int i = 0; i < children; i++) {
                 childAddress[i] = StorageAddress.createPointer(istream.readInt(), istream.readShort());
             }
-        } catch(final IOException e) {
-            LOG.error("IO error while reading document data for document " + fileURI, e);
-            //TODO : raise exception ?
-        }
-    }
-
-    public void readWithMetadata(final VariableByteInput istream) throws IOException, EOFException {
-        try {
-            docId = istream.readInt();
-            fileURI = XmldbURI.createInternal(istream.readUTF());
-            getPermissions().read(istream);
-            //Should be > 0 ;-)
-            children = istream.readInt();
-            childAddress = new long[children];
-            for(int i = 0; i < children; i++) {
-                childAddress[i] = StorageAddress.createPointer(istream.readInt(), istream.readShort());
-            }
             metadata = new DocumentMetadata();
             metadata.read(pool.getSymbols(), istream);
         } catch(final IOException e) {
             LOG.error("IO error while reading document data for document " + fileURI, e);
-            //TODO : raise exception ?
-        }
-    }
-
-    /**
-     * The method <code>readDocumentMeta</code>
-     *
-     * @param istream a <code>VariableByteInput</code> value
-     */
-    public void readDocumentMeta(final VariableByteInput istream) {
-        // skip over already known document data
-        try {
-            istream.skip(1); //docId
-            istream.readUTF(); //fileURI.toString()
-
-            //istream.skip(2 + 2); //uid, gid, mode, children count
-            istream.skip(1); //unix style permission uses a single long
-            if(permissions instanceof ACLPermission) {
-                final int aceCount = istream.read();
-                istream.skip(aceCount);
-            }
-
-            istream.skip(1); //children size
-            istream.skip(children * 2); //actual children
-
-            metadata = new DocumentMetadata();
-            metadata.read(pool.getSymbols(), istream);
-
-        } catch(final IOException e) {
-            LOG.error("IO error while reading document metadata for " + fileURI, e);
             //TODO : raise exception ?
         }
     }
@@ -572,7 +591,8 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @return an <code>int</code> value
      */
     @Override
-    public final int compareTo(final DocumentImpl other) {
+    @EnsureContainerLocked(mode=READ_LOCK)
+    public int compareTo(@EnsureLocked(mode=READ_LOCK) final DocumentImpl other) {
         final long otherId = other.docId;
         if(otherId == docId) {
             return Constants.EQUAL;
@@ -583,9 +603,6 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
         }
     }
 
-    /* (non-Javadoc)
-     * @see org.exist.dom.persistent.NodeImpl#updateChild(org.w3c.dom.Node, org.w3c.dom.Node)
-     */
     @Override
     public IStoredNode updateChild(final Txn transaction, final Node oldChild, final Node newChild) throws DOMException {
         if(!(oldChild instanceof StoredNode)) {
@@ -628,6 +645,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
     }
 
     @Override
+    @EnsureContainerLocked(mode=READ_LOCK)
     public Node getFirstChild() {
         if(children == 0) {
             return null;
@@ -641,6 +659,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
         return null;
     }
 
+    @EnsureContainerLocked(mode=READ_LOCK)
     protected NodeProxy getFirstChildProxy() {
         return new NodeProxy(this, NodeId.ROOT_NODE, Node.ELEMENT_NODE, childAddress[0]);
     }
@@ -650,6 +669,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @return a <code>long</code> value
      */
+    @EnsureContainerLocked(mode=READ_LOCK)
     public long getFirstChildAddress() {
         if(children == 0) {
             return StoredNode.UNKNOWN_NODE_IMPL_ADDRESS;
@@ -664,6 +684,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
     }
 
     @Override
+    @EnsureContainerLocked(mode=READ_LOCK)
     public NodeList getChildNodes() {
         final org.exist.dom.NodeListImpl list = new org.exist.dom.NodeListImpl();
         try(final DBBroker broker = pool.getBroker()) {
@@ -700,6 +721,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @param node a <code>NodeHandle</code> value
      * @return a <code>Node</code> value
      */
+    @EnsureContainerLocked(mode=READ_LOCK)
     protected Node getFollowingSibling(final NodeHandle node) {
         final NodeList cl = getChildNodes();
         for(int i = 0; i < cl.getLength(); i++) {
@@ -749,6 +771,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @return a <code>DocumentType</code> value
      */
     @Override
+    @EnsureContainerLocked(mode=READ_LOCK)
     public DocumentType getDoctype() {
         return getMetadata().getDocType();
     }
@@ -758,6 +781,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      *
      * @param docType a <code>DocumentType</code> value
      */
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void setDocumentType(final DocumentType docType) {
         getMetadata().setDocType(docType);
     }
@@ -1044,10 +1068,12 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
      * @return an <code>int</code> value
      */
     @Override
+    @EnsureContainerLocked(mode=READ_LOCK)
     public int getChildCount() {
         return children;
     }
 
+    @EnsureContainerLocked(mode=WRITE_LOCK)
     public void setChildCount(final int count) {
         this.children = count;
         if(children == 0) {
@@ -1056,6 +1082,7 @@ public class DocumentImpl extends NodeImpl<DocumentImpl> implements Resource, Do
     }
 
     @Override
+    @EnsureContainerLocked(mode=READ_LOCK)
     public boolean isSameNode(final Node other) {
         // This function is used by Saxon in some circumstances, and this partial implementation is required for proper Saxon operation.
         if(other instanceof DocumentImpl) {

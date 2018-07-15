@@ -543,12 +543,9 @@ typeDeclaration throws XPathException:
 
 sequenceType throws XPathException
 :
-	( "empty" LPAREN ) => "empty"^ LPAREN! RPAREN! // deprecated
-	|
 	( "empty-sequence" LPAREN ) => "empty-sequence"^ LPAREN! RPAREN!
 	|
 	itemType ( occurrenceIndicator )?
-	// conformant: ( "empty-sequence" LPAREN ) => "empty-sequence"^ LPAREN! RPAREN! | itemType ( occurrenceIndicator )?
 	;
 
 occurrenceIndicator
@@ -1056,7 +1053,7 @@ pragma throws XPathException
 exception catch [RecognitionException e]
         {
             lexer.wsExplicit = false;
-            throw new XPathException("err:XPST0003: Parse error: " + e.getMessage() + " at line: " + e.getLine() + " column: " + e.getColumn());
+            throw new XPathException(ErrorCodes.XPST0003, "Parse error: " + e.getMessage() + " at line: " + e.getLine() + " column: " + e.getColumn());
         }
 	;
 
@@ -1516,14 +1513,11 @@ qName returns [String name]
 	String name2;
 }
 :
-	( ncnameOrKeyword COLON ncnameOrKeyword )
-	=> name=nc1:ncnameOrKeyword COLON name2=ncnameOrKeyword
-	{
-		name= name + ':' + name2;
-		#qName.copyLexInfo(#nc1);
-	}
-	|
-	name=ncnameOrKeyword
+	n:QNAME {
+	    name = n.getText();
+    }
+    |
+    name=ncnameOrKeyword
 	;
 
 directConstructor throws XPathException
@@ -1677,7 +1671,7 @@ elementWithoutAttributes throws XPathException
         {
         	if (e.getMessage().contains("expecting XML end tag") || e.getMessage().contains("<")) {
             	lexer.wsExplicit = false;
-            	throw new XPathException(#q, "err:XPST0003: No closing end tag found for element constructor: " + name);
+            	throw new XPathException(#q, ErrorCodes.XPST0003, "No closing end tag found for element constructor: " + name);
             } else if (e.getMessage().contains("unexpected token")) {
 	        	throw new XPathException(e.getLine(), e.getColumn(), ErrorCodes.XPST0003, e.getMessage() +
 	        		" (while expecting closing tag for element constructor: " + name + ")");
@@ -1712,10 +1706,10 @@ elementWithAttributes throws XPathException
 			content:mixedElementContent END_TAG_START! cname=qn:qName! GT!
 			{
 				if (elementStack.isEmpty())
-					throw new XPathException(#qn, "err:XPST0003: Found closing tag without opening tag: " + cname);
+					throw new XPathException(#qn, ErrorCodes.XPST0003, "Found closing tag without opening tag: " + cname);
 				String prev= (String) elementStack.pop();
 				if (!prev.equals(cname))
-					throw new XPathException(#qn, "err:XPST0003: Found closing tag: " + cname + "; expected: " + prev);
+					throw new XPathException(#qn, ErrorCodes.XPST0003, "Found closing tag: " + cname + "; expected: " + prev);
 				#elementWithAttributes= #(#[ELEMENT, cname], #attrs);
 				if (!elementStack.isEmpty()) {
 					lexer.inElementContent= true;
@@ -1728,7 +1722,7 @@ elementWithAttributes throws XPathException
         {
         	if (e.getMessage().contains("expecting XML end tag") || e.getMessage().contains("<")) {
 	            lexer.wsExplicit = false;
-	            throw new XPathException(#q, "err:XPST0003: Static error: no closing end tag found for element constructor: " + name);
+	            throw new XPathException(#q, ErrorCodes.XPST0003, "Static error: no closing end tag found for element constructor: " + name);
 	        } else if (e.getMessage().contains("unexpected token")) {
 	        	throw new XPathException(e.getLine(), e.getColumn(), ErrorCodes.XPST0003, e.getMessage() +
 	        		" (while expecting closing tag for element constructor: " + name + ")");
@@ -1892,7 +1886,9 @@ attributeEnclosedExpr throws XPathException
 ncnameOrKeyword returns [String name]
 { name= null; }
 :
-	n1:NCNAME { name= n1.getText(); }
+	n1:NCNAME {
+	    name= n1.getText();
+    }
 	|
 	name=reservedKeywords
 	;
@@ -2211,24 +2207,22 @@ protected HEX_DIGITS
 	( '0'..'9' | 'a'..'f' | 'A'..'F' )+
 	;
 
-protected NMSTART
-:
-	( LETTER | '_' )
-	;
-
-protected NMCHAR
-:
-	( LETTER | DIGIT | '.' | '-' | '_' | COMBINING_CHAR | EXTENDER )
-	;
-
 protected NCNAME
 options {
 	testLiterals=true;
-	paraphrase="name";
+	paraphrase="ncname";
 }
 :
-	NMSTART ( NMCHAR )*
+    NAME_START_CHAR ( NAME_CHAR)*
 	;
+
+protected QNAME
+options {
+    paraphrase="qname";
+}
+:
+    NAME_START_CHAR ( NAME_CHAR)* COLON NAME_START_CHAR ( NAME_CHAR)*
+;
 
 protected WS
 :
@@ -2557,6 +2551,11 @@ options {
 		$setType(STRING_CONSTRUCTOR_CONTENT);
 	}
 	|
+	{ !inAttributeContent && !inElementContent && !inStringConstructor }?
+	( NCNAME COLON NCNAME ) =>
+	QNAME { $setType(QNAME); }
+	|
+	( NAME_START_CHAR ) =>
 	ncname:NCNAME { $setType(ncname.getType()); }
 	|
 	{ parseStringLiterals && !inElementContent && !inStringConstructor }?
@@ -2659,6 +2658,17 @@ options {
 	|
 	HASH { $setType(HASH); }
 	;
+
+protected NAME_START_CHAR
+:
+    ( 'A'..'Z' | '_' | 'a'..'z' | '\u00C0'..'\u00D6' | '\u00D8'..'\u00F6' | '\u00F8'..'\u02FF' | '\u0370'..'\u037D' | '\u037F'..'\u1FFF' | '\u200C'..'\u200D' | '\u2070'..'\u218F' |
+    '\u2C00'..'\u2FEF' | '\u3001'..'\uD7FF' | '\uF900'..'\uFDCF' | '\uFDF0'..'\uFFFD' )
+    ;
+
+protected NAME_CHAR
+:
+    ( NAME_START_CHAR | '-' | '.' | '0'..'9' | '\u00B7' | '\u0300'..'\u036F' | '\u203F'..'\u2040' )
+    ;
 
 protected CHAR
 :

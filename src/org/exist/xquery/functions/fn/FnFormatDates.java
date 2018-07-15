@@ -67,7 +67,7 @@ public class FnFormatDates extends BasicFunction {
 
 	private static FunctionReturnSequenceType RETURN = 
 		new FunctionReturnSequenceType(
-			Type.STRING, Cardinality.EXACTLY_ONE, "The formatted date");
+			Type.STRING, Cardinality.ZERO_OR_ONE, "The formatted date");
 
 
     public final static FunctionSignature FNS_FORMAT_DATETIME_2 = new FunctionSignature(
@@ -139,7 +139,7 @@ public class FnFormatDates extends BasicFunction {
         RETURN
     );
 
-    private static Pattern componentPattern = Pattern.compile("([YMDdWwFHhmsfZzPCE])\\s*(.*)");
+    private static final Pattern componentPattern = Pattern.compile("([YMDdWwFHhmsfZzPCE])\\s*(.*)");
 
     public FnFormatDates(XQueryContext context, FunctionSignature signature) {
         super(context, signature);
@@ -296,7 +296,20 @@ public class FnFormatDates extends BasicFunction {
                 break;
             case 'F':
                 if (allowDate) {
-                    final int day = dt.getDayOfWeek();
+                    int day = dt.getDayOfWeek();
+
+                    /**
+                     * We convert from the 1 == Sunday base
+                     * used by {@link AbstractDateTimeValue#getDayOfWeek()}
+                     * to the 1 == Monday base expected
+                     * by {@link #formatNumber(char, String, String, int, Optional, StringBuilder)}.
+                     */
+                    if (day == Calendar.SUNDAY) {
+                        day = 7;
+                    } else {
+                        day--;
+                    }
+
                     formatNumber(specifier, picture, width, day, language, sb);
                 } else {
                     throw new XPathException(this, ErrorCodes.FOFD1350, "format-time does not support a day component");

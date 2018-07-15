@@ -1,6 +1,6 @@
 /*
  * eXist Open Source Native XML Database
- * Copyright (C) 2001-2017 The eXist Project
+ * Copyright (C) 2001-2018 The eXist Project
  * http://exist-db.org
  *
  * This program is free software; you can redistribute it and/or
@@ -27,11 +27,20 @@ public enum Mode {
    * low memory requirements, but it have design bugs:
    *  - broker hold while io stream in "use";
    *  - require 2 threads per operation.
+   *
+   * @deprecated Threads are no longer used. This is now just an acronym for {@link #DISK}.
    */
+  @Deprecated
   THREADS,
 
   /**
-   * Keep stream's data in memory to solve THREADS design bugs.
+   * Keep stream's data on disk to solve {@link #THREADS} design bugs,
+   * and issues with memory use of {@link #MEMORY}.
+   */
+  DISK,
+
+  /**
+   * Keep stream's data in memory to solve {@link #THREADS} design bugs.
    */
   MEMORY
 }

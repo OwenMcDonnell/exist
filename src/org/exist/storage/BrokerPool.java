@@ -22,6 +22,7 @@ package org.exist.storage;
 import com.evolvedbinary.j8fu.fsm.AtomicFSM;
 import com.evolvedbinary.j8fu.fsm.FSM;
 import net.jcip.annotations.GuardedBy;
+import net.jcip.annotations.ThreadSafe;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.Database;
@@ -52,10 +53,9 @@ import org.exist.scheduler.impl.SystemTaskJobImpl;
 import org.exist.security.*;
 import org.exist.security.SecurityManager;
 import org.exist.security.internal.SecurityManagerImpl;
-import org.exist.storage.btree.DBException;
 import org.exist.storage.journal.JournalManager;
-import org.exist.storage.lock.DeadlockDetection;
 import org.exist.storage.lock.FileLockService;
+import org.exist.storage.lock.LockManager;
 import org.exist.storage.recovery.RecoveryManager;
 import org.exist.storage.sync.Sync;
 import org.exist.storage.sync.SyncTask;
@@ -129,6 +129,8 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
      * The name of the database instance
      */
     private final String instanceName;
+
+    private final LockManager lockManager;
 
     /**
      * State of the BrokerPool instance
@@ -299,8 +301,6 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
     private DefaultCacheManager cacheManager;
 
-    private CollectionCacheManager collectionCacheMgr;
-
     private long reservedMem;
 
     /**
@@ -382,11 +382,9 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
         this.minBrokers = conf.getProperty(PROPERTY_MIN_CONNECTIONS, minBrokers);
         this.maxBrokers = conf.getProperty(PROPERTY_MAX_CONNECTIONS, maxBrokers);
-
         LOG.info("database instance '" + instanceName + "' will have between " + nf.format(this.minBrokers) + " and " + nf.format(this.maxBrokers) + " brokers");
 
         this.majorSyncPeriod = conf.getProperty(PROPERTY_SYNC_PERIOD, DEFAULT_SYNCH_PERIOD);
-
         LOG.info("database instance '" + instanceName + "' will be synchronized every " + nf.format(/*this.*/majorSyncPeriod) + " ms");
 
         // convert from bytes to megabytes: 1024 * 1024
@@ -396,6 +394,9 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
         //Configuration is valid, save it
         this.conf = conf;
+
+        final int concurrencyLevel = Math.max(maxBrokers, 2 * Runtime.getRuntime().availableProcessors());
+        this.lockManager = new LockManager(concurrencyLevel);
 
         statusObserver.ifPresent(this.statusObservers::add);
 
@@ -456,8 +457,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         final int bufferSize = Optional.of(conf.getInteger(PROPERTY_COLLECTION_CACHE_SIZE))
                 .filter(size -> size != -1)
                 .orElse(DEFAULT_COLLECTION_BUFFER_SIZE);
-        this.collectionCache = servicesManager.register(new CollectionCache(this, bufferSize, 0.000001));
-        this.collectionCacheMgr = servicesManager.register(new CollectionCacheManager(this, collectionCache));
+        this.collectionCache = servicesManager.register(new CollectionCache());
         this.notificationService = servicesManager.register(new NotificationService());
 
         this.journalManager = recoveryEnabled ? Optional.of(new JournalManager()) : Optional.empty();
@@ -497,7 +497,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         final Runtime rt = Runtime.getRuntime();
         final long maxMem = rt.maxMemory();
         final long minFree = maxMem / 5;
-        reservedMem = cacheManager.getTotalMem() + collectionCacheMgr.getMaxTotal() + minFree;
+        reservedMem = cacheManager.getTotalMem() + collectionCache.getMaxCacheSize() + minFree;
         LOG.debug("Reserved memory: " + reservedMem + "; max: " + maxMem + "; min: " + minFree);
 
         //prepare the registered services, before entering system (single-user) mode
@@ -518,7 +518,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
             statusReporter = new StatusReporter(SIGNAL_STARTUP);
             statusObservers.forEach(statusReporter::addObserver);
 
-            final Thread statusThread = new Thread(statusReporter);
+            final Thread statusThread = new Thread(statusReporter, "exist-broker-" + getId() + "-initialize-statusReporter");
             statusThread.start();
 
             // statusReporter may have to be terminated or the thread can/will hang.
@@ -574,8 +574,9 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
                         statusReporter.setStatus(SIGNAL_READINESS);
 
-                        try {
-                            servicesManager.startSystemServices(systemBroker);
+                        try(final Txn transaction = transactionManager.beginTransaction()) {
+                            servicesManager.startSystemServices(systemBroker, transaction);
+                            transaction.commit();
                         } catch(final BrokerPoolServiceException e) {
                             throw new EXistException(e);
                         }
@@ -627,8 +628,9 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                         // we have completed all system mode operations
                         // we can now prepare those services which need
                         // system mode before entering multi-user mode
-                        try {
-                            servicesManager.startPreMultiUserSystemServices(systemBroker);
+                        try(final Txn transaction = transactionManager.beginTransaction()) {
+                            servicesManager.startPreMultiUserSystemServices(systemBroker, transaction);
+							transaction.commit();
                         } catch(final BrokerPoolServiceException e) {
                             throw new EXistException(e);
                         }
@@ -692,7 +694,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                 if(collection == null) {
                     throw new IOException("Could not create system collection: " + sysCollectionUri);
                 }
-                collection.setPermissions(permissions);
+                collection.setPermissions(sysBroker, permissions);
                 sysBroker.saveCollection(txn, collection);
 
                 transact.commit(txn);
@@ -727,6 +729,15 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
             final DocumentTriggerProxy triggerProxy = new DocumentTriggerProxy(ConfigurationDocumentTrigger.class); //, collection.getURI());
             collConf.documentTriggers().add(triggerProxy);
         }
+    }
+
+    /**
+     * Get the LockManager for this database instance
+     *
+     * @return The lock manager
+     */
+    public LockManager getLockManager() {
+        return lockManager;
     }
 
     /**
@@ -968,10 +979,6 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         return cacheManager;
     }
 
-    public CollectionCacheManager getCollectionCacheMgr() {
-        return collectionCacheMgr;
-    }
-
     /**
      * Returns the index manager which handles all additional indexes not
      * being part of the database core.
@@ -1054,8 +1061,9 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         inactiveBrokers.push(broker);
         brokersCount++;
         broker.setId(broker.getClass().getName() + '_' + instanceName + "_" + brokersCount);
-        LOG.debug(
-            "created broker '" + broker.getId() + " for database instance '" + instanceName + "'");
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Created broker '" + broker.getId() + " for database instance '" + instanceName + "'");
+        }
         return broker;
     }
 
@@ -1164,6 +1172,8 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                 LOG.debug("Db instance is in service mode. Waiting for db to become available again ...");
                 wait();
             } catch(final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                LOG.error("Interrupt detected");
             }
         }
 
@@ -1187,6 +1197,8 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                     }
             }
             broker = inactiveBrokers.pop();
+            broker.prepare();
+
             //activate the broker
             activeBrokers.put(Thread.currentThread(), broker);
 
@@ -1342,6 +1354,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
         inServiceMode = true;
         final DBBroker broker = inactiveBrokers.peek();
+        broker.prepare();
         checkpoint = true;
         sync(broker, Sync.MAJOR);
         checkpoint = false;
@@ -1452,6 +1465,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                 //TODO : use get() then release the broker ?
                 // No, might lead to a deadlock.
                 final DBBroker broker = inactiveBrokers.pop();
+                broker.prepare();
                 //Do the synchronization job
                 sync(broker, syncEvent);
                 inactiveBrokers.push(broker);
@@ -1529,13 +1543,11 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                 // they will have a lock on the transactionManager
                 lock.lock();
 
-                synchronized (this) {
-                    // these may be used and set by other threads for the same or some other purpose
-                    // (unlikely). Take no chances.
-                    statusReporter = new StatusReporter(SIGNAL_SHUTDOWN);
-                    statusObservers.forEach(statusReporter::addObserver);
+                statusReporter = new StatusReporter(SIGNAL_SHUTDOWN);
+                statusObservers.forEach(statusReporter::addObserver);
 
-                    final Thread statusThread = new Thread(statusReporter);
+                synchronized (this) {
+                    final Thread statusThread = new Thread(statusReporter,  "exist-broker-" + getId() + "-shutdown-statusReporter");
                     statusThread.start();
 
                     // release transaction log to allow remaining brokers to complete
@@ -1551,12 +1563,6 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
                     //Notify all running XQueries that we are shutting down
                     processMonitor.killAll(500);
-                    //TODO : close other objects using varying methods ? set them to null ?
-                    //cacheManager.something();
-                    //xQueryPool.something();
-                    //collectionConfigurationManager.something();
-                    //collectionCache.something();
-                    //xmlReaderPool.close();
 
                     if (isRecoveryEnabled()) {
                         journalManager.ifPresent(jm -> jm.flush(true, true));
@@ -1584,24 +1590,6 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                     }
                     LOG.debug("Calling shutdown ...");
 
-//                    if (pluginManager != null) {
-//                        try {
-//                            pluginManager.stop((DBBroker) null);
-//                        } catch (final EXistException e) {
-//                            LOG.warn("Error during plugin manager shutdown: " + e.getMessage(), e);
-//                        }
-//                    }
-//
-//                    // stop all services
-//                    servicesManager.shutdown(this);
-//
-//                    // closing down external indexes
-//                    try {
-//                        indexManager.shutdown();
-//                    } catch (final DBException e) {
-//                        LOG.warn("Error during index shutdown: " + e.getMessage(), e);
-//                    }
-
                     //TODO : replace the following code by get()/release() statements ?
                     // WM: deadlock risk if not all brokers returned properly.
                     DBBroker broker = null;
@@ -1622,6 +1610,7 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
 
                     try {
                         if (broker != null) {
+                            broker.prepare();
                             broker.pushSubject(securityManager.getSystemSubject());
                         }
 
@@ -1643,6 +1632,8 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                             broker.popSubject();
                         }
                     }
+
+                    collectionCache.invalidateAll();
 
                     // final notification to database services to shutdown
                     servicesManager.shutdown();
@@ -1668,9 +1659,6 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                     if (shutdownListener != null) {
                         shutdownListener.shutdown(instanceName, instancesCount());
                     }
-
-                    statusReporter.terminate();
-                    statusReporter = null;
                 }
             } finally {
                 // clear instance variables, just to be sure they will be garbage collected
@@ -1678,7 +1666,6 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                 Configurator.clear(this);
                 transactionManager = null;
                 collectionCache = null;
-                collectionCacheMgr = null;
                 xQueryPool = null;
                 processMonitor = null;
                 collectionConfigurationManager = null;
@@ -1689,6 +1676,9 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                 securityManager = null;
                 notificationService = null;
                 statusObservers.clear();
+
+                statusReporter.terminate();
+                statusReporter = null;
             }
         } finally {
             status.process(Event.FINISHED_SHUTDOWN);
@@ -1788,7 +1778,6 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
             writer.format("Database instance: %s\n", getId());
             writer.println("-------------------------------------------------------------------");
             watchdog.ifPresent(wd -> wd.dump(writer));
-            DeadlockDetection.debug(writer);
 
             final String s = sout.toString();
             LOG.info(s);
@@ -1798,8 +1787,8 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
         }
     }
 
+    @ThreadSafe
     private static class StatusReporter extends Observable implements Runnable {
-
         private String status;
         private volatile boolean terminate = false;
 
@@ -1813,11 +1802,14 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
             this.notifyObservers(status);
         }
 
-        public synchronized void terminate() {
+        public void terminate() {
             this.terminate = true;
-            this.notifyAll();
+            synchronized(this) {
+                this.notifyAll();
+            }
         }
 
+        @Override
         public void run() {
             while(!terminate) {
                 synchronized(this) {
@@ -1826,9 +1818,9 @@ public class BrokerPool extends BrokerPools implements BrokerPoolConstants, Data
                     } catch(final InterruptedException e) {
                         // nothing to do
                     }
+                    this.setChanged();
+                    this.notifyObservers(status);
                 }
-                this.setChanged();
-                this.notifyObservers(status);
             }
         }
     }

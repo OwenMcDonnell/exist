@@ -116,19 +116,6 @@
             </init-param>
         -->
     </servlet>
-    
-    <!-- 
-        Old webDAV access to eXist 
-    -->
-    <!--servlet>
-        <servlet-name>WebDAVServlet</servlet-name>
-        <servlet-class>org.exist.http.servlets.WebDAVServlet</servlet-class>
-
-        <init-param>
-            <param-name>authentication</param-name>
-            <param-value>basic</param-value>
-        </init-param>
-    </servlet-->
 	
     <servlet>
         <servlet-name>XQueryURLRewrite</servlet-name>
@@ -141,18 +128,12 @@
             <param-value>WEB-INF/controller-config.xml</param-value>
         </init-param>
     </servlet>
-    
+
     <servlet>
         <servlet-name>XSLTServlet</servlet-name>
         <servlet-class>org.exist.http.servlets.XSLTServlet</servlet-class>
     </servlet>
 
-    <!-- Atom Atom Publishing Protocol -->
-    <servlet>
-        <servlet-name>AtomServlet</servlet-name>
-        <servlet-class>org.exist.atom.http.AtomServlet</servlet-class>
-    </servlet>
-    
     <!--
         EXQuery - RESTXQ
     -->

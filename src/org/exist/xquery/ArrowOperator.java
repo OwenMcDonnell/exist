@@ -29,6 +29,7 @@ import org.exist.xquery.value.Type;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Implements the XQuery 3.1 arrow operator.
@@ -37,6 +38,7 @@ import java.util.List;
  */
 public class ArrowOperator extends AbstractExpression {
 
+    private QName qname = null;
     private Expression leftExpr;
     private FunctionCall fcall = null;
     private Expression funcSpec = null;
@@ -51,9 +53,9 @@ public class ArrowOperator extends AbstractExpression {
 
     public void setArrowFunction(final String fname, final List<Expression> params) throws XPathException {
         try {
-            final QName name = QName.parse(context, fname, context.getDefaultFunctionNamespace());
-            this.fcall = NamedFunctionReference.lookupFunction(this, context, name, params.size() + 1);
+            this.qname = QName.parse(context, fname, context.getDefaultFunctionNamespace());
             this.parameters = params;
+            // defer resolving the function to analyze to make sure all functions are known
         } catch (final IllegalQNameException e) {
             throw new XPathException(ErrorCodes.XPST0081, "No namespace defined for prefix " + fname);
         }
@@ -70,6 +72,9 @@ public class ArrowOperator extends AbstractExpression {
             throw new XPathException(this,
                 ErrorCodes.EXXQDY0003,
                 "arrow operator is not available before XQuery 3.1");
+        }
+        if (qname != null) {
+            fcall = NamedFunctionReference.lookupFunction(this, context, qname, parameters.size() + 1);
         }
         this.cachedContextInfo = contextInfo;
         leftExpr.analyze(contextInfo);
@@ -104,18 +109,20 @@ public class ArrowOperator extends AbstractExpression {
             }
             fref = (FunctionReference)item0;
         }
-        final List<Expression> fparams = new ArrayList<>(parameters.size() + 1);
-        fparams.add(new ContextParam(context, contextSequence));
-        fparams.addAll(parameters);
+        try {
+            final List<Expression> fparams = new ArrayList<>(parameters.size() + 1);
+            fparams.add(new ContextParam(context, contextSequence));
+            fparams.addAll(parameters);
 
-        fref.setArguments(fparams);
-        // need to create a new AnalyzeContextInfo to avoid memory leak
-        // cachedContextInfo will stay in memory
-        fref.analyze(new AnalyzeContextInfo(cachedContextInfo));
-        // Evaluate the function
-        final Sequence result = fref.eval(contextSequence);
-        fref.resetState(false);
-        return result;
+            fref.setArguments(fparams);
+            // need to create a new AnalyzeContextInfo to avoid memory leak
+            // cachedContextInfo will stay in memory
+            fref.analyze(new AnalyzeContextInfo(cachedContextInfo));
+            // Evaluate the function
+            return fref.eval(contextSequence);
+        } finally {
+            fref.close();
+        }
     }
 
     @Override

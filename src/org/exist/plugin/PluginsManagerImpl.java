@@ -22,9 +22,12 @@
 package org.exist.plugin;
 
 import java.io.*;
-import java.lang.reflect.Constructor;
+import java.lang.invoke.LambdaMetafactory;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.net.URL;
 import java.util.*;
+import java.util.function.Function;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -34,17 +37,18 @@ import org.exist.LifeCycle;
 import org.exist.backup.BackupHandler;
 import org.exist.backup.RestoreHandler;
 import org.exist.collections.Collection;
+import org.exist.collections.triggers.TriggerException;
 import org.exist.config.*;
 import org.exist.config.Configuration;
 import org.exist.config.annotation.*;
 import org.exist.security.Permission;
+import org.exist.security.PermissionDeniedException;
 import org.exist.storage.BrokerPool;
 import org.exist.storage.BrokerPoolService;
 import org.exist.storage.BrokerPoolServiceException;
 import org.exist.storage.DBBroker;
-import org.exist.storage.txn.TransactionManager;
 import org.exist.storage.txn.Txn;
-import org.exist.util.*;
+import org.exist.util.LockException;
 import org.exist.util.serializer.SAXSerializer;
 import org.exist.xmldb.XmldbURI;
 import org.w3c.dom.Document;
@@ -52,6 +56,8 @@ import org.xml.sax.Attributes;
 import org.xml.sax.Locator;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.AttributesImpl;
+
+import static java.lang.invoke.MethodType.methodType;
 
 /**
  * Plugins manager.
@@ -62,21 +68,16 @@ import org.xml.sax.helpers.AttributesImpl;
 @ConfigurationClass("plugin-manager")
 public class PluginsManagerImpl implements Configurable, BrokerPoolService, PluginsManager, LifeCycle {
 
-    private final static Logger LOG = LogManager.getLogger(PluginsManagerImpl.class);
+    private static final Logger LOG = LogManager.getLogger(PluginsManagerImpl.class);
 
-    public final static XmldbURI COLLETION_URI = XmldbURI.SYSTEM.append("plugins");
-    public final static XmldbURI CONFIG_FILE_URI = XmldbURI.create("config.xml");
+    private static final XmldbURI COLLETION_URI = XmldbURI.SYSTEM.append("plugins");
+    private static final XmldbURI CONFIG_FILE_URI = XmldbURI.create("config.xml");
 
     @ConfigurationFieldAsAttribute("version")
     private String version = "1.0";
 
     @ConfigurationFieldAsElement("plugin")
-    private List<String> runPlugins = new ArrayList<String>();
-
-//	@ConfigurationFieldAsElement("search-path")
-//	private Map<String, File> placesToSearch = new LinkedHashMap<String, File>();
-
-//	private Map<String, PluginInfo> foundClasses = new LinkedHashMap<String, PluginInfo>();
+    private List<String> runPlugins = new ArrayList<>();
 
     private Map<String, Plug> jacks = new HashMap<>();
 
@@ -97,60 +98,69 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
 	}
 
 	@Override
-	public void startSystem(final DBBroker systemBroker) throws BrokerPoolServiceException {
+	public void startSystem(final DBBroker systemBroker, final Txn transaction) throws BrokerPoolServiceException {
 		try {
-			start(systemBroker);
+			start(systemBroker, transaction);
 		} catch(final EXistException e) {
 			throw new BrokerPoolServiceException(e);
 		}
 	}
 
     @Override
-	public void start(DBBroker broker) throws EXistException {
-        final TransactionManager transaction = broker.getBrokerPool().getTransactionManager();
-
-        try (final Txn txn = transaction.beginTransaction()) {
-            collection = broker.getCollection(COLLETION_URI);
-            if (collection == null) {
-                collection = broker.getOrCreateCollection(txn, COLLETION_URI);
-                if (collection == null) {
-                    return;
-                }
-                //if db corrupted it can lead to unrunnable issue
-                //throw new ConfigurationException("Collection '/db/system/plugins' can't be created.");
-
-                collection.setPermissions(Permission.DEFAULT_SYSTEM_SECURITY_COLLECTION_PERM);
-                broker.saveCollection(txn, collection);
-            }
-
-            transaction.commit(txn);
-        } catch (final Exception e) {
-            e.printStackTrace();
-            LOG.debug("loading configuration failed: " + e.getMessage());
-        }
-
-        final Configuration _config_ = Configurator.parse(this, broker, collection, CONFIG_FILE_URI);
-        configuration = Configurator.configure(this, _config_);
-
-        //load plugins by META-INF/services/
+	public void start(final DBBroker broker, final Txn transaction) throws EXistException {
+        boolean interrupted = false;
         try {
+            try {
+                collection = broker.getCollection(COLLETION_URI);
+                if (collection == null) {
+                    collection = broker.getOrCreateCollection(transaction, COLLETION_URI);
+                    if (collection == null) {
+                        return;
+                    }
+                    //if db corrupted it can lead to unrunnable issue
+                    //throw new ConfigurationException("Collection '/db/system/plugins' can't be created.");
 
-            for (final Class<? extends Plug> plugin : listServices(Plug.class)) {
-                //System.out.println("found plugin "+plugin);
-
-                try {
-                    final Constructor<? extends Plug> ctor = plugin.getConstructor(PluginsManager.class);
-                    final Plug plgn = ctor.newInstance(this);
-
-                    jacks.put(plugin.getName(), plgn);
-                } catch (final Throwable e) {
-                    e.printStackTrace();
+                    collection.setPermissions(broker, Permission.DEFAULT_SYSTEM_SECURITY_COLLECTION_PERM);
+                    broker.saveCollection(transaction, collection);
                 }
+
+    		} catch (final TriggerException | PermissionDeniedException | IOException | LockException e) {
+    			e.printStackTrace();
+    			LOG.debug("loading configuration failed: " + e.getMessage());
             }
-        } catch (final Throwable e) {
-            e.printStackTrace();
-        }
-        //UNDERSTAND: call save?
+
+            final Configuration _config_ = Configurator.parse(this, broker, collection, CONFIG_FILE_URI);
+            configuration = Configurator.configure(this, _config_);
+
+            //load plugins by META-INF/services/
+            try {
+
+                final MethodHandles.Lookup lookup = MethodHandles.lookup();
+
+                for (final Class<? extends Plug> pluginClazz : listServices(Plug.class)) {
+                    try {
+                        final MethodHandle methodHandle = lookup.findConstructor(pluginClazz, methodType(void.class, PluginsManager.class));
+                        final Function<PluginsManager, Plug> ctor = (Function<PluginsManager, Plug>)
+                                LambdaMetafactory.metafactory(
+                                        lookup, "apply", methodType(Function.class),
+                                        methodHandle.type().erase(), methodHandle, methodHandle.type()).getTarget().invokeExact();
+
+                        final Plug plgn = ctor.apply(this);
+
+                        jacks.put(pluginClazz.getName(), plgn);
+                    } catch (final Throwable e) {
+                        if (e instanceof InterruptedException) {
+                            // NOTE: must set interrupted flag
+                            interrupted = true;
+                        }
+
+                        e.printStackTrace();
+                    }
+                }
+            } catch (final Throwable e) {
+                e.printStackTrace();
+            }
+            //UNDERSTAND: call save?
 
 //		try {
 //			configuration.save(broker);
@@ -158,15 +168,19 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
 //			//LOG?
 //		}
 
-        for (final Plug jack : jacks.values()) {
-            if (jack instanceof LifeCycle) {
-                ((LifeCycle) jack).start(broker);
+            for (final Plug jack : jacks.values()) {
+                jack.start(broker, transaction);
+            }
+        } finally {
+            if (interrupted) {
+                // NOTE: must set interrupted flag
+                Thread.currentThread().interrupt();
             }
         }
     }
 
     @Override
-    public void sync(DBBroker broker) {
+    public void sync(final DBBroker broker) {
         for (final Plug plugin : jacks.values()) {
             try {
                 plugin.sync(broker);
@@ -197,22 +211,33 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
 	}
 
 	@SuppressWarnings("unchecked")
-	public void addPlugin(String className) {
+    @Override
+	public void addPlugin(final String className) {
 		//check if already run
 		if (jacks.containsKey(className))
 			{return;}
 		
 		try {
-			final Class<? extends Plug> plugin = (Class<? extends Plug>) Class.forName(className);
-			
-			final Constructor<? extends Plug> ctor = plugin.getConstructor(PluginsManager.class);
-			final Plug plgn = ctor.newInstance(this);
-			
-			jacks.put(plugin.getName(), plgn);
+			final Class<? extends Plug> pluginClazz = (Class<? extends Plug>) Class.forName(className);
+
+            final MethodHandles.Lookup lookup = MethodHandles.lookup();
+            final MethodHandle methodHandle = lookup.findConstructor(pluginClazz, methodType(void.class, PluginsManager.class));
+            final Function<PluginsManager, Plug> ctor = (Function<PluginsManager, Plug>)
+                    LambdaMetafactory.metafactory(
+                            lookup, "apply", methodType(Function.class),
+                            methodHandle.type().erase(), methodHandle, methodHandle.type()).getTarget().invokeExact();
+
+			final Plug plgn = ctor.apply(this);
+
+			jacks.put(pluginClazz.getName(), plgn);
 			runPlugins.add(className);
 			
 			//TODO: if (jack instanceof Startable) { ((Startable) jack).startUp(broker); }
 		} catch (final Throwable e) {
+            if (e instanceof InterruptedException) {
+                // NOTE: must set interrupted flag
+                Thread.currentThread().interrupt();
+            }
 //			e.printStackTrace();
 		}
 	}
@@ -220,10 +245,10 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
     /*
      * Generate list of service implementations
      */
-    private <S> Iterable<Class<? extends S>> listServices(Class<S> ifc) throws Exception {
+    private <S> Iterable<Class<? extends S>> listServices(final Class<S> ifc) throws Exception {
         final ClassLoader ldr = Thread.currentThread().getContextClassLoader();
         final Enumeration<URL> e = ldr.getResources("META-INF/services/" + ifc.getName());
-        final Set<Class<? extends S>> services = new HashSet<Class<? extends S>>();
+        final Set<Class<? extends S>> services = new HashSet<>();
         while (e.hasMoreElements()) {
             final URL url = e.nextElement();
             try (final InputStream is = url.openStream();
@@ -259,19 +284,19 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
     }
 
     @Override
-    public BackupHandler getBackupHandler(Logger logger) {
+    public BackupHandler getBackupHandler(final Logger logger) {
         return new BH(logger);
     }
 
     class BH implements BackupHandler {
         Logger LOG;
 
-        public BH(Logger logger) {
+        BH(final Logger logger) {
             LOG = logger;
         }
 
         @Override
-        public void backup(Collection colection, AttributesImpl attrs) {
+        public void backup(final Collection colection, final AttributesImpl attrs) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof BackupHandler) {
                     try {
@@ -284,7 +309,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void backup(Collection colection, SAXSerializer serializer) throws SAXException {
+        public void backup(final Collection colection, final SAXSerializer serializer) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof BackupHandler) {
                     try {
@@ -297,7 +322,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void backup(Document document, AttributesImpl attrs) {
+        public void backup(final Document document, final AttributesImpl attrs) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof BackupHandler) {
                     try {
@@ -310,7 +335,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void backup(Document document, SAXSerializer serializer) throws SAXException {
+        public void backup(final Document document, final SAXSerializer serializer) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof BackupHandler) {
                     try {
@@ -333,7 +358,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
     class RH implements RestoreHandler {
 
         @Override
-        public void setDocumentLocator(Locator locator) {
+        public void setDocumentLocator(final Locator locator) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).setDocumentLocator(locator);
@@ -360,7 +385,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void startPrefixMapping(String prefix, String uri) throws SAXException {
+        public void startPrefixMapping(final String prefix, final String uri) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).startPrefixMapping(prefix, uri);
@@ -369,7 +394,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void endPrefixMapping(String prefix) throws SAXException {
+        public void endPrefixMapping(final String prefix) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).endPrefixMapping(prefix);
@@ -378,7 +403,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void startElement(String uri, String localName, String qName, Attributes atts) throws SAXException {
+        public void startElement(final String uri, final String localName, final String qName, final Attributes atts) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).startElement(uri, localName, qName, atts);
@@ -387,7 +412,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void endElement(String uri, String localName, String qName) throws SAXException {
+        public void endElement(final String uri, final String localName, final String qName) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).endElement(uri, localName, qName);
@@ -396,7 +421,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void characters(char[] ch, int start, int length) throws SAXException {
+        public void characters(final char[] ch, final int start, final int length) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).characters(ch, start, length);
@@ -405,7 +430,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void ignorableWhitespace(char[] ch, int start, int length) throws SAXException {
+        public void ignorableWhitespace(final char[] ch, final int start, final int length) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).ignorableWhitespace(ch, start, length);
@@ -414,7 +439,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void processingInstruction(String target, String data) throws SAXException {
+        public void processingInstruction(final String target, final String data) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).processingInstruction(target, data);
@@ -423,7 +448,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void skippedEntity(String name) throws SAXException {
+        public void skippedEntity(final String name) throws SAXException {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).skippedEntity(name);
@@ -432,7 +457,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void startCollectionRestore(Collection colection, Attributes atts) {
+        public void startCollectionRestore(final Collection colection, final Attributes atts) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).startCollectionRestore(colection, atts);
@@ -441,7 +466,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void endCollectionRestore(Collection colection) {
+        public void endCollectionRestore(final Collection colection) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).endCollectionRestore(colection);
@@ -450,7 +475,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void startDocumentRestore(Document document, Attributes atts) {
+        public void startDocumentRestore(final Document document, final Attributes atts) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).startDocumentRestore(document, atts);
@@ -459,7 +484,7 @@ public class PluginsManagerImpl implements Configurable, BrokerPoolService, Plug
         }
 
         @Override
-        public void endDocumentRestore(Document document) {
+        public void endDocumentRestore(final Document document) {
             for (final Plug plugin : jacks.values()) {
                 if (plugin instanceof RestoreHandler) {
                     ((RestoreHandler) plugin).endDocumentRestore(document);

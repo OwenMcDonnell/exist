@@ -27,10 +27,12 @@ import org.exist.EXistException;
 import org.exist.debuggee.dbgp.Errors;
 import org.exist.dom.persistent.BinaryDocument;
 import org.exist.dom.persistent.DocumentImpl;
+import org.exist.dom.persistent.LockedDocument;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.DBBroker;
 import org.exist.storage.lock.Lock.LockMode;
 import org.exist.util.Base64Encoder;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xmldb.XmldbURI;
 
 import java.net.URL;
@@ -38,7 +40,6 @@ import java.net.MalformedURLException;
 import java.net.URLConnection;
 import java.net.URLDecoder;
 import java.io.InputStream;
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -96,7 +97,6 @@ public class Source extends Command {
 			return;
 		}
 
-		DocumentImpl resource = null;
     	InputStream is = null;
         try {
         	
@@ -109,11 +109,11 @@ public class Source extends Command {
 	        		XmldbURI pathUri = XmldbURI.create( URLDecoder.decode( fileURI.substring(15) , "UTF-8" ) );
 	
 	        		Database db = getJoint().getContext().getDatabase();
-	        		try(final DBBroker broker = db.getBroker()) {
-		    			resource = broker.getXMLResource(pathUri, LockMode.READ_LOCK);
+	        		try(final DBBroker broker = db.getBroker();
+						final LockedDocument resource = broker.getXMLResource(pathUri, LockMode.READ_LOCK)) {
 		
-		    			if (resource.getResourceType() == DocumentImpl.BINARY_FILE) {
-		    				is = broker.getBinaryResource((BinaryDocument) resource);
+		    			if (resource.getDocument().getResourceType() == DocumentImpl.BINARY_FILE) {
+		    				is = broker.getBinaryResource((BinaryDocument) resource.getDocument());
 		    			} else {
 		    				//TODO: xml source???
 		    				return;
@@ -127,7 +127,7 @@ public class Source extends Command {
         		URLConnection conn = url.openConnection();
         		is = conn.getInputStream();
         	}
-    		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    		FastByteArrayOutputStream baos = new FastByteArrayOutputStream();
     		byte[] buf = new byte[256];
     		int c;
     		while ((c = is.read(buf)) > -1) {
@@ -149,10 +149,6 @@ public class Source extends Command {
 						exception = e;
 					}
 				}
-			}
-
-			if(resource != null) {
-        		resource.getUpdateLock().release(LockMode.READ_LOCK);
 			}
 		}
     }
@@ -180,7 +176,7 @@ public class Source extends Command {
     				Base64Encoder enc = new Base64Encoder();
     				enc.translate(source);
 
-    				ByteArrayOutputStream baos = new ByteArrayOutputStream();
+					FastByteArrayOutputStream baos = new FastByteArrayOutputStream(head.length() + ((source.length / 100) * 33) + tail.length());
     				baos.write(head.getBytes());
     				baos.write(new String(enc.getCharArray()).getBytes());
     				baos.write(tail.getBytes());

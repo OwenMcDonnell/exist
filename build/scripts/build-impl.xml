@@ -29,8 +29,8 @@
     <property name="dist" value="./dist"/>
     <property name="webapp.dir" value="${dist}/webapp"/>
     <property name="build.compiler" value="modern"/>
-    <property name="build.compiler.source" value="1.5"/>
-    <property name="build.compiler.target" value="1.5"/>
+    <property name="build.compiler.source" value="1.8"/>
+    <property name="build.compiler.target" value="1.8"/>
     <property name="build.debug" value="on"/>
     <property name="build.optimize" value="on"/>
     <property name="build.deprecation" value="on"/>
@@ -100,7 +100,7 @@
         </fileset>
     </path>
 
-    <taskdef classpath="${tools.aspectj}/lib/aspectjtools-1.8.9.jar" resource="org/aspectj/tools/ant/taskdefs/aspectjTaskdefs.properties"/>
+    <taskdef classpath="${tools.aspectj}/lib/aspectjtools-1.9.1.jar" resource="org/aspectj/tools/ant/taskdefs/aspectjTaskdefs.properties"/>
     <path id="classpath.aspectj">
         <fileset dir="${tools.aspectj}/lib">
             <include name="*.jar"/>
@@ -119,20 +119,43 @@
         <echo message="--------------------------------------------"/>
         <echo message="eXist ${project.version}${build.label} build"/>
         <echo message="--------------------------------------------"/>
-        <echo message="Git commit: ${git.revision}"/>
+
+        <if>
+            <and>
+                <isset property="git.revision"/>
+                <not><equals arg1="${git.revision}" arg2=""/></not>
+            </and>
+            <then>
+                <echo message="Git commit: ${git.revision}"/>
+            </then>
+        </if>
         <if>
             <or>
                 <not><isset property="git.branch.full"/></not>
                 <equals arg1="${git.branch.full}" arg2=""/>
             </or>
             <then>
-                <echo message="Git tag: ${git.tag.full}"/>
+                <if>
+                    <or>
+                        <not><isset property="git.tag.full"/></not>
+                        <equals arg1="${git.tag.full}" arg2=""/>
+                    </or>
+                    <then>
+                        <echo message="Built from Installed build: ${project.version}"/>
+                    </then>
+                    <else>
+                        <echo message="Git tag: '${git.tag.full}'"/>
+                    </else>
+                </if>
             </then>
             <else>
                 <echo message="Git branch: ${git.branch.full}"/>
             </else>
         </if>
         <echo message=""/>
+        <echo message="Java Vendor: ${java.vendor}"/>
+        <echo message="Java Version: ${java.runtime.version}"/>
+        <echo message="Java VM: ${java.vm.name} ${java.vm.version}"/>
         <echo message="${ant.version}"/>
         <echo message="---------------------------------------------"/>
         <echo/>
@@ -194,7 +217,8 @@
             <include name="org/**"/>
 
             <!-- Do not compile Aspects here, compiled below by iajc -->
-        <exclude name="org/exist/security/PermissionRequiredAspect.java"/>
+            <exclude name="org/exist/security/PermissionRequiredAspect.java"/>
+            <exclude name="org/exist/storage/lock/EnsureLockingAspect.java"/>
 
         <classpath>
                 <path refid="classpath.core"/>
@@ -232,6 +256,12 @@
             </classpath>
         </javac>
 
+        <copy todir="${junit.reports}/classes/org/exist/test/runner">
+            <fileset dir="${junit.reports}/src/org/exist/test/runner">
+                <include name="*.xq"/>
+            </fileset>
+        </copy>
+
     </target>
 
 
@@ -242,6 +272,7 @@
     <target name="check.aspects.uptodate">
         <uptodate property="aspectj.uptodate" targetfile="exist.jar">
             <srcfiles dir= "${src}" includes="org/exist/security/PermissionRequiredAspect.java"/>
+            <srcfiles dir= "${src}" includes="org/exist/storage/lock/EnsureLockingAspect.java"/>
         </uptodate>
     </target>
 
@@ -266,6 +297,9 @@
             fork="true" maxmem="1024m" showWeaveInfo="true" inpath="${build.classes}">
 
             <include name="org/exist/security/PermissionRequiredAspect.java"/>
+
+            <!-- can be enabled in local.build.properties -->
+            <include name="org/exist/storage/lock/EnsureLockingAspect.java" if="${enable.ensurelocking.aspect}" />
 
             <classpath refid="classpath.compile-aspectj"/>
         </iajc>
@@ -339,11 +373,6 @@
                 <include name="**/*.xq*"/>
             </fileset>
         </copy>
-        <copy todir="${build.classes}/org/exist/atom/modules">
-            <fileset dir="${src}/org/exist/atom/modules">
-                <include name="**.xq"/>
-            </fileset>
-        </copy>
         <copy todir="${build.classes}/org/exist/http">
             <fileset dir="${src}/org/exist/http">
                 <include name="**.xq"/>
@@ -410,7 +439,6 @@
             </manifest>
             <exclude name="org/exist/*.xsl"/>
             <exclude name="org/exist/ant/**"/>
-            <exclude name="org/exist/atom/**"/>
             <exclude name="org/exist/http/**"/>
             <exclude name="org/exist/jetty/**"/>
             <exclude name="org/exist/jsp/**"/>
@@ -476,7 +504,6 @@
             </manifest>
             <include name="org/exist/*.xsl"/>
             <include name="org/exist/ant/**"/>
-            <include name="org/exist/atom/**"/>
             <include name="org/exist/http/**"/>
             <include name="org/exist/jetty/**"/>
             <include name="org/exist/jsp/**"/>
@@ -487,7 +514,7 @@
             <include name="org/exist/xquery/functions/session/**"/>
         </jar>
         <echo message="Creating exist-testkit.jar ..."/>
-        <jar basedir="${junit.reports}/classes" compress="true" jarfile="exist-testkit.jar">
+        <jar compress="true" jarfile="exist-testkit.jar">
             <manifest>
                 <attribute name="Implementation-Title" value="${project.name} Test Kit"/>
                 <attribute name="Implementation-Version" value="${project.version}"/>
@@ -510,10 +537,15 @@
                 <attribute name="Description" value="eXist XML Native Database Test Kit"/>
                 <attribute name="Created-By" value="${ant.version}"/>
             </manifest>
-            <include name="org/exist/TestUtils.class"/>
-            <include name="org/exist/test/**"/>
-            <include name="xquery/TestRunner.class"/>
-            <include name="xquery/TestRunnerMain.class"/>
+            <fileset dir="${junit.reports}/classes">
+                <include name="org/exist/TestUtils.class"/>
+                <include name="org/exist/test/**"/>
+                <include name="xquery/TestRunner.class"/>
+                <include name="xquery/TestRunnerMain.class"/>
+            </fileset>
+            <fileset dir="${build.classes}">
+                <include name="org/exist/xquery/lib/xqsuite/xqsuite.xql"/>
+            </fileset>
         </jar>
     </target>
 

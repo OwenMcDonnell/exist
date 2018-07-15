@@ -33,6 +33,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.DefaultComboBoxModel;
@@ -56,9 +57,9 @@ import javax.swing.border.BevelBorder;
 import javax.xml.transform.OutputKeys;
 
 import org.exist.security.PermissionDeniedException;
+import org.exist.xmldb.EXistXQueryService;
 import org.exist.xmldb.LocalCollection;
 import org.exist.xmldb.UserManagementService;
-import org.exist.xmldb.XQueryService;
 import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.CompiledXQuery;
 import org.exist.xquery.XQueryContext;
@@ -480,7 +481,7 @@ public class QueryDialog extends JFrame {
             long tCompiled = 0;
 
             try {
-                final XQueryService service = (XQueryService) collection.getService("XQueryService", "1.0");
+                final EXistXQueryService service = (EXistXQueryService) collection.getService("XQueryService", "1.0");
                 service.setProperty(OutputKeys.INDENT, properties.getProperty(OutputKeys.INDENT, "yes"));
                 final long t0 = System.currentTimeMillis();
                 final CompiledExpression compiled = service.compile(xpath);
@@ -509,15 +510,14 @@ public class QueryDialog extends JFrame {
         }
     }
 
+    private static AtomicInteger queryThreadId = new AtomicInteger();
 
-    class QueryThread extends Thread {
-
-        private String xpath;
-
+    private class QueryThread extends Thread {
+        private final String xpath;
         private XQueryContext context;
 
-        public QueryThread(String query) {
-            super();
+        public QueryThread(final String query) {
+            super("exist-queryThread-" + queryThreadId.getAndIncrement());
             this.xpath = query;
             this.context = null;
         }
@@ -537,9 +537,7 @@ public class QueryDialog extends JFrame {
             return false;
         }
 
-        /**
-         * @see java.lang.Thread#run()
-         */
+        @Override
         public void run() {
             statusMessage.setText(Messages.getString("QueryDialog.processingquerymessage"));
             progress.setVisible(true);
@@ -549,7 +547,7 @@ public class QueryDialog extends JFrame {
             long tCompiled = 0;
             ResourceSet result = null;
             try {
-                final XQueryService service = (XQueryService) collection.getService("XQueryService", "1.0");
+                final EXistXQueryService service = (EXistXQueryService) collection.getService("XQueryService", "1.0");
                 service.setProperty(OutputKeys.INDENT, properties.getProperty(OutputKeys.INDENT, "yes"));
                 final long t0 = System.currentTimeMillis();
 

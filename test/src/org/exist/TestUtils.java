@@ -4,6 +4,7 @@ import org.exist.collections.Collection;
 import org.exist.dom.persistent.DocumentImpl;
 import org.exist.storage.BrokerPool;
 import org.exist.storage.DBBroker;
+import org.exist.storage.lock.Lock;
 import org.exist.storage.txn.Txn;
 import org.exist.util.Configuration;
 import org.exist.util.DatabaseConfigurationException;
@@ -16,6 +17,7 @@ import static org.junit.Assert.fail;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -59,28 +61,41 @@ public class TestUtils {
                 final Txn transaction = pool.getTransactionManager().beginTransaction()) {
 
                 // Remove all collections below the /db root, except /db/system
-                Collection root = broker.getOrCreateCollection(transaction, XmldbURI.ROOT_COLLECTION_URI);
-                assertNotNull(root);
-                for (Iterator<DocumentImpl> i = root.iterator(broker); i.hasNext(); ) {
-                    DocumentImpl doc = i.next();
-                    root.removeXMLResource(transaction, broker, doc.getURI().lastSegment());
-                }
-                broker.saveCollection(transaction, root);
-                for (Iterator<XmldbURI> i = root.collectionIterator(broker); i.hasNext(); ) {
-                    XmldbURI childName = i.next();
-                    if (childName.equals("system"))
-                        continue;
-                    Collection childColl = broker.getOrCreateCollection(transaction, XmldbURI.ROOT_COLLECTION_URI.append(childName));
-                    assertNotNull(childColl);
-                    broker.removeCollection(transaction, childColl);
+                try(final Collection root = broker.openCollection(XmldbURI.ROOT_COLLECTION_URI, Lock.LockMode.WRITE_LOCK)) {
+                    if(root == null) {
+                        transaction.commit();
+                        return;
+                    }
+
+                    for (final Iterator<DocumentImpl> i = root.iterator(broker); i.hasNext(); ) {
+                        final DocumentImpl doc = i.next();
+                        root.removeXMLResource(transaction, broker, doc.getURI().lastSegment());
+                    }
+                    broker.saveCollection(transaction, root);
+
+                    for (final Iterator<XmldbURI> i = root.collectionIterator(broker); i.hasNext(); ) {
+                        final XmldbURI childName = i.next();
+                        if (childName.equals("system")) {
+                            continue;
+                        }
+
+                        try(final Collection childColl = broker.openCollection(XmldbURI.ROOT_COLLECTION_URI.append(childName), Lock.LockMode.WRITE_LOCK);) {
+                            assertNotNull(childColl);
+                            broker.removeCollection(transaction, childColl);
+                        }
+                    }
+                    broker.saveCollection(transaction, root);
                 }
 
                 // Remove /db/system/config/db and all collection configurations with it
-                Collection config = broker.getOrCreateCollection(transaction,
-                        XmldbURI.create(XmldbURI.CONFIG_COLLECTION + "/db"));
-                assertNotNull(config);
-                broker.removeCollection(transaction, config);
-                
+                try(final Collection dbConfig = broker.openCollection(XmldbURI.CONFIG_COLLECTION_URI.append("/db"), Lock.LockMode.WRITE_LOCK)) {
+                    if(dbConfig == null) {
+                        transaction.commit();
+                        return;
+                    }
+                    broker.removeCollection(transaction, dbConfig);
+                }
+
                 pool.getTransactionManager().commit(transaction);
             }
         } catch (Exception e) {
@@ -138,12 +153,28 @@ public class TestUtils {
     }
 
     /**
+     * Get a file from within the EXIST_HOME directory
+     *
+     * @param fileName Just the name of the file.
+     *
+     * @return The path if it exists
+     */
+    public static Optional<Path> getExistHomeFile(final String fileName) throws IOException {
+        final Path path = getEXistHome().orElseGet(() -> Paths.get(".")).resolve(fileName);
+        if(Files.exists(path)) {
+            return Optional.of(path);
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Reads the content of the sample hamlet.xml
      *
      * @return The content of the file
      */
     public static byte[] readHamletSampleXml() throws IOException {
-        return readSample("shakespeare/hamlet.xml");
+        return readFile(resolveHamletSample());
     }
 
     /**
@@ -152,7 +183,7 @@ public class TestUtils {
      * @return The content of the file
      */
     public static byte[] readRomeoAndJulietSampleXml() throws IOException {
-        return readSample("shakespeare/r_and_j.xml");
+        return readFile(resolveRomeoAndJulietSample());
     }
 
     /**
@@ -197,5 +228,23 @@ public class TestUtils {
      */
     public static Path resolveShakespeareSample(final String relativePath) {
         return shakespeareSamples().resolve(relativePath);
+    }
+
+    /**
+     * Gets the path of the Shakespeare Hamlet sample
+     *
+     * @return The path to the Shakespeare Hamlet sample
+     */
+    public static Path resolveHamletSample() {
+        return resolveShakespeareSample("hamlet.xml");
+    }
+
+    /**
+     * Gets the path of the Shakespeare Romeo and Juliet sample
+     *
+     * @return The path to the Shakespeare Romeo and Juliet sample
+     */
+    public static Path resolveRomeoAndJulietSample() {
+        return resolveShakespeareSample("r_and_j.xml");
     }
 }

@@ -1,7 +1,8 @@
 package org.exist.xquery;
 
 import org.exist.test.ExistWebServer;
-import org.exist.xmldb.XPathQueryServiceImpl;
+import org.exist.xmldb.EXistXPathQueryService;
+import org.exist.xmldb.EXistXQueryService;
 import org.exist.xmldb.XmldbURI;
 import org.junit.*;
 import org.junit.runner.JUnitCore;
@@ -1620,7 +1621,6 @@ public class XPathQueryTest {
         assertEquals(2, result.getSize());
 
         String item = result.getResource(0).getContent().toString();
-        System.out.println(item);
         assertXMLEqual("<text> </text>", item);
         item = result.getResource(1).getContent().toString();
         assertXMLEqual("<text xml:space=\"default\"> </text>", item);
@@ -1647,7 +1647,7 @@ public class XPathQueryTest {
                 "XPathQueryService",
                 "1.0");
 
-        final XPathQueryServiceImpl service2 = (XPathQueryServiceImpl) service;
+        final EXistXPathQueryService service2 = (EXistXPathQueryService) service;
         service2.declareVariable("name", "MONTAGUE");
         service2.declareVariable("name", "43");
 
@@ -1844,7 +1844,7 @@ public class XPathQueryTest {
         final String invalidModule = "module namespace foo=\"urn:foo\";\n" +
                 "declare function foo:test() { \"Hello World! };";
         
-        final org.exist.xmldb.XQueryService service = (org.exist.xmldb.XQueryService) getQueryService();
+        final EXistXQueryService service = (EXistXQueryService) getQueryService();
         boolean exceptionOccurred = false;
         try {
             service.compile(invalidQuery);
@@ -1898,7 +1898,7 @@ public class XPathQueryTest {
                 "   element {ex:elementName()} {}\n" +
                 "}</test>";
 
-        final org.exist.xmldb.XQueryService service = (org.exist.xmldb.XQueryService)getQueryService();
+        final EXistXQueryService service = (EXistXQueryService)getQueryService();
         service.setProperty(OutputKeys.INDENT, "no");
         final ResourceSet result = service.query(query);
         assertEquals(1, result.getSize());

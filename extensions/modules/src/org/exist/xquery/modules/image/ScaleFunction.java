@@ -24,14 +24,14 @@ package org.exist.xquery.modules.image;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.commons.io.output.ByteArrayOutputStream;
 
 import java.awt.Image;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import javax.imageio.ImageIO;
 
 import org.exist.dom.QName;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xquery.BasicFunction;
 import org.exist.xquery.Cardinality;
 import org.exist.xquery.FunctionSignature;
@@ -123,10 +123,11 @@ public class ScaleFunction extends BasicFunction
 		//TODO currently ONLY tested for JPEG!!!
 		Image image = null;
 		BufferedImage bImage = null;
-		try
+		try (//get the image data
+			 InputStream inputStream = ((BinaryValue) args[0].itemAt(0)).getInputStream() )
 		{
-			//get the image data
-			image = ImageIO.read(((BinaryValue)args[0].itemAt(0)).getInputStream());
+
+			image = ImageIO.read(inputStream);
 		
 			if(image == null) {
                             logger.error("Unable to read image data!");
@@ -137,11 +138,12 @@ public class ScaleFunction extends BasicFunction
 			bImage = ImageModule.createThumb(image, maxHeight, maxWidth);
 		
 			//get the new scaled image
-			ByteArrayOutputStream os = new ByteArrayOutputStream();
-			ImageIO.write(bImage, formatName, os);
-			
-			//return the new scaled image data
-			return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), new ByteArrayInputStream(os.toByteArray()));
+			try (final FastByteArrayOutputStream os = new FastByteArrayOutputStream()) {
+				ImageIO.write(bImage, formatName, os);
+
+				//return the new scaled image data
+				return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), os.toFastByteInputStream());
+			}
 		}
 		catch(Exception e)
 		{

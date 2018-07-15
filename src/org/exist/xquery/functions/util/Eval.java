@@ -32,7 +32,6 @@ import java.util.SimpleTimeZone;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 
 import javax.xml.datatype.Duration;
 import javax.xml.parsers.ParserConfigurationException;
@@ -48,6 +47,7 @@ import org.exist.dom.QName;
 import org.exist.dom.memtree.NodeImpl;
 import org.exist.dom.memtree.ReferenceNode;
 import org.exist.dom.memtree.SAXAdapter;
+import org.exist.dom.persistent.LockedDocument;
 import org.exist.security.PermissionDeniedException;
 import org.exist.security.Subject;
 import org.exist.security.UUIDGenerator;
@@ -60,6 +60,7 @@ import org.exist.storage.BrokerPool;
 import org.exist.storage.DBBroker;
 import org.exist.storage.XQueryPool;
 import org.exist.storage.lock.Lock.LockMode;
+import org.exist.util.NamedThreadFactory;
 import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.BasicFunction;
 import org.exist.xquery.Cardinality;
@@ -135,20 +136,7 @@ public class Eval extends BasicFunction {
     protected static final FunctionReturnSequenceType RETURN_THREADID_TYPE = new FunctionReturnSequenceType(Type.STRING, Cardinality.EXACTLY_ONE, "The ID of the asynchronously executing thread.");
     protected static final FunctionReturnSequenceType RETURN_ITEM_TYPE = new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "the results of the evaluated XPath/XQuery expression");
 
-    private final static ExecutorService asyncExecutorService = Executors.newCachedThreadPool(new AsyncQueryThreadFactory());
-    private static class AsyncQueryThreadFactory implements ThreadFactory {
-        private int id = 0;
-
-        @Override
-        public Thread newThread(Runnable r) {
-            return new Thread(r, "AsynchronousEval-" + getId());
-        }
-
-        private synchronized int getId() {
-            return id++;
-        }
-    }
-
+    private final static ExecutorService asyncExecutorService = Executors.newCachedThreadPool(new NamedThreadFactory("asyncEval"));
 
     public final static FunctionSignature signatures[] = {
         new FunctionSignature(
@@ -489,21 +477,19 @@ public class Eval extends BasicFunction {
                     locationUri = moduleLoadPathUri.resolveCollectionPath(locationUri);
                 }
 
-                DocumentImpl sourceDoc = null;
-                try {
-                    sourceDoc = context.getBroker().getXMLResource(locationUri.toCollectionPathURI(), LockMode.READ_LOCK);
-                    if (sourceDoc == null)
-                        {throw new XPathException(this, "source for module " + location + " not found in database");}
+                try(final LockedDocument lockedSourceDoc = context.getBroker().getXMLResource(locationUri.toCollectionPathURI(), LockMode.READ_LOCK)) {
+                    final DocumentImpl sourceDoc = lockedSourceDoc == null ? null : lockedSourceDoc.getDocument();
+                    if (sourceDoc == null) {
+                        throw new XPathException(this, "source for module " + location + " not found in database");
+                    }
                     if (sourceDoc.getResourceType() != DocumentImpl.BINARY_FILE ||
-                            !"application/xquery".equals(sourceDoc.getMetadata().getMimeType()))
-                        {throw new XPathException(this, "source for module " + location + " is not an XQuery or " +
-                        "declares a wrong mime-type");}
+                            !"application/xquery".equals(sourceDoc.getMetadata().getMimeType())) {
+                        throw new XPathException(this, "source for module " + location + " is not an XQuery or " +
+                        "declares a wrong mime-type");
+                    }
                     querySource = new DBSource(context.getBroker(), (BinaryDocument) sourceDoc, true);
                 } catch (final PermissionDeniedException e) {
                     throw new XPathException(this, "permission denied to read module source from " + location);
-                } finally {
-                    if(sourceDoc != null)
-                        {sourceDoc.getUpdateLock().release(LockMode.READ_LOCK);}
                 }
             } catch(final URISyntaxException e) {
                 throw new XPathException(this, e);
@@ -513,6 +499,9 @@ public class Eval extends BasicFunction {
             try {
                 //TODO: use URIs to ensure proper resolution of relative locations
                 querySource = SourceFactory.getSource(context.getBroker(), context.getModuleLoadPath(), location, true);
+                if (querySource == null) {
+                    throw new XPathException(this, "source for query at " + location + " not found");
+                }
             } catch (final MalformedURLException e) {
                 throw new XPathException(this, "source location for query at " + location + " should be a valid URL: " +
                         e.getMessage());
@@ -565,6 +554,10 @@ public class Eval extends BasicFunction {
 				final Element elem = (Element) child;
 				//TODO : error check
 				innerContext.getWatchDog().setMaxNodes(Integer.parseInt(elem.getAttribute("value")));
+			} else if (child.getNodeType() == Node.ELEMENT_NODE &&	"timeout".equals(child.getLocalName())) {
+				final Element elem = (Element) child;
+				//TODO : error check
+				innerContext.getWatchDog().setTimeout(Long.parseLong(elem.getAttribute("value")));
 			} else if (child.getNodeType() == Node.ELEMENT_NODE &&	"current-dateTime".equals(child.getLocalName())) {
 				final Element elem = (Element) child;
 				//TODO : error check

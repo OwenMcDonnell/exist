@@ -67,16 +67,28 @@
                 <path refid="classpath.test-libs"/>
             </classpath>
         </javac>
-        <copy todir="${junit.reports}/classes/org/exist/performance/ant"
-              file="${junit.reports}/src/org/exist/performance/ant/antlib.xml"/>
-        <copy todir="${junit.reports}/classes/org/exist/performance"
-            file="${junit.reports}/src/org/exist/performance/log2html.xql"/>
-        <copy todir="${junit.reports}/classes/org/exist/config/mapping"
-            file="${junit.reports}/src/org/exist/config/mapping/Mapping.xml"/>
-        <copy todir="${junit.reports}/classes/org/exist/source"
-              file="${junit.reports}/src/org/exist/source/main.xq"/>
-        <copy todir="${junit.reports}/classes/org/exist/source"
-              file="${junit.reports}/src/org/exist/source/library.xqm"/>
+
+        <!-- copy all test resources to compiled tests output dir -->
+        <copy todir="${junit.reports}/classes" includeEmptyDirs="false">
+            <fileset dir="${junit.reports}/src">
+                <exclude name="**/*.java"/>
+            </fileset>
+            <file name="LICENSE"/>
+        </copy>
+        <copy todir="${junit.reports}/classes/samples" includeemptydirs="false">
+            <fileset dir="samples" >
+                <exclude name="ant/**"/>
+                <exclude name="http/**"/>
+                <exclude name="soap/**"/>
+                <exclude name="src/**"/>
+                <exclude name="xmlrpc/**"/>
+                <exclude name="build.xml"/>
+            </fileset>
+        </copy>
+        <copy todir="${junit.reports}/classes/org/exist/xquery/value" includeemptydirs="false">
+            <file name="webapp/logo.jpg"/>
+        </copy>
+
        <!-- <ant antfile="build.xml" dir="extensions/indexes" target="compile-tests"/>
         <ant antfile="build.xml" dir="extensions/xqdoc" target="compile-tests"/> -->
     </target>
@@ -97,7 +109,14 @@
         <mkdir dir="${junit.reports.html}"/>
 
         <!-- create a log4j config for running the tests -->
-        <xslt in="${basedir}/log4j2.xml" out="${basedir}/test/classes/log4j2-test.xml" style="${build.scripts}/log4j2-test.xsl"/>
+        <xslt in="${basedir}/log4j2.xml" out="${basedir}/test/classes/log4j2-test.xml" style="${build.scripts}/log4j2-test.xsl" classpathref="classpath.core">
+            <factory name="net.sf.saxon.TransformerFactoryImpl"/>
+            <classpath>
+                <fileset dir="lib/endorsed">
+                    <include name="Saxon*.jar"/>
+                </fileset>
+            </classpath>
+        </xslt>
 
     </target>
 
@@ -110,7 +129,17 @@
             <fileset dir="${junit.reports.dat}">
                 <include name="TEST-*.xml"/>
             </fileset>
-            <report format="frames" todir="${junit.reports.html}"/>
+            <report format="frames" todir="${junit.reports.html}">
+                <classpath>
+                    <fileset dir="lib/endorsed">
+                        <include name="xalan*.jar"/>
+                        <include name="xml-apis*.jar"/>
+                        <include name="xercesImpl*.jar"/>
+                        <include name="serializer*.jar"/>
+                    </fileset>
+                </classpath>
+                <factory name="org.apache.xalan.processor.TransformerFactoryImpl"/>
+            </report>
         </junitreport>
     </target>
 
@@ -153,6 +182,7 @@
             <test fork="yes" name="xquery.numbers.NumberTests" todir="${junit.reports.dat}"/>
             <test fork="yes" name="xquery.modules.compression.CompressionTests" todir="${junit.reports.dat}"/>
             <test fork="yes" name="xquery.modules.file.FileTests" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="xquery.validation.ValidationTests" todir="${junit.reports.dat}"/>
 
             <!--  //-->
             <test fork="yes" name="org.exist.http.AuditTrailSessionListenerTest" todir="${junit.reports.dat}"/>
@@ -165,11 +195,23 @@
             <test fork="yes" name="org.exist.xquery.OptimizerTest" todir="${junit.reports.dat}"/>
             <test fork="yes" name="org.exist.collections.triggers.AllTriggerTests" todir="${junit.reports.dat}"/>
             <test fork="yes" name="org.exist.collections.AllCollectionTests" todir="${junit.reports.dat}"/>
-            <test fork="yes" name="org.exist.security.XMLDBSecurityTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.AccountTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.LocalSecurityManagerRoundtripTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.RemoteSecurityManagerRoundtripTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.RestApiSecurityTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.SimpleACLPermissionTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.UnixStylePermissionTest" todir="${junit.reports.dat}"/>
             <test fork="yes" name="org.exist.security.XmldbApiSecurityTest" todir="${junit.reports.dat}"/>
-            <test fork="yes" name="org.exist.security.SecurityManagerRoundtripTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.XMLDBSecurityTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.security.internal.aider.UnixStylePermissionAiderTest" todir="${junit.reports.dat}"/>
             <test fork="yes" name="org.exist.storage.NativeBrokerTest" todir="${junit.reports.dat}"/>
-	    <test fork="yes" name="org.exist.AllIndexerTests" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.storage.StartupLockingTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.storage.lock.DocumentLocksTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.storage.lock.CollectionLocksTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.storage.lock.GetXMLResourceNoLockTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.storage.lock.LockManagerTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.storage.lock.ProtectedModeTest" todir="${junit.reports.dat}"/>
+            <test fork="yes" name="org.exist.AllIndexerTests" todir="${junit.reports.dat}"/>
 
             <test fork="yes" name="org.exist.storage.ModificationTimeTest" todir="${junit.reports.dat}"/>
             
@@ -185,6 +227,7 @@
                     <exclude name="**/xmlrpc/*.java"/>
                     <exclude name="**/http/*.java"/>
                     <exclude name="**/storage/*.java"/>
+                    <exclude name="**/storage/journal/AbstractJournalTest.java"/>
                     <exclude name="**/storage/serializers/*.java"/>
                     <exclude name="**/storage/lock/*.java"/>
                     <exclude name="**/soap/*.java"/>
@@ -253,6 +296,9 @@
             <formatter type="plain"/>
             <formatter type="xml"/>
             <test name="org.exist.xmldb.concurrent.AllConcurrentTests" todir="${junit.reports.dat}"/>
+
+            <!-- NOTE: Can still show Collection <-> Document deadlocks -->
+            <!-- test name="org.exist.collections.ConcurrencyTest" todir="${junit.reports.dat}"/ -->
         </junit>
     </target>
 
@@ -542,7 +588,4 @@
         </junit>
     </target>
     
-    <!-- Build and test for travis service -->
-    <target name="travis" depends="clean,clean-all,all,test-prepare,test-local,test-wrapup"/>
-        
 </project>

@@ -1,5 +1,6 @@
 package org.exist.xquery.functions.array;
 
+import com.evolvedbinary.j8fu.function.FunctionE;
 import org.exist.dom.QName;
 import org.exist.xquery.*;
 import org.exist.xquery.value.*;
@@ -69,7 +70,7 @@ public class ArrayFunction extends BasicFunction {
                         new FunctionParameterSequenceType("array", Type.ARRAY, Cardinality.EXACTLY_ONE, "The array"),
                         new FunctionParameterSequenceType("index", Type.INTEGER, Cardinality.EXACTLY_ONE, "The index")
                     },
-                    new FunctionReturnSequenceType(Type.INTEGER, Cardinality.ZERO_OR_MORE, "The value at $index")
+                    new FunctionReturnSequenceType(Type.ITEM, Cardinality.ZERO_OR_MORE, "The value at $index")
             ),
             new FunctionSignature(
                     new QName(Fn.APPEND.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
@@ -79,7 +80,7 @@ public class ArrayFunction extends BasicFunction {
                             new FunctionParameterSequenceType("array", Type.ARRAY, Cardinality.EXACTLY_ONE, "The array"),
                             new FunctionParameterSequenceType("appendage", Type.ITEM, Cardinality.ZERO_OR_MORE, "The items to append")
                     },
-                    new FunctionReturnSequenceType(Type.ARRAY, Cardinality.ZERO_OR_MORE, "A copy of $array with the new member attached")
+                    new FunctionReturnSequenceType(Type.ARRAY, Cardinality.EXACTLY_ONE, "A copy of $array with the new member attached")
             ),
             new FunctionSignature(
                     new QName(Fn.HEAD.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
@@ -118,12 +119,12 @@ public class ArrayFunction extends BasicFunction {
             ),
             new FunctionSignature(
                     new QName(Fn.REMOVE.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
-                    "Returns an array containing all members from $array except the member whose position is $position.",
+                    "Returns an array containing all the members of the supplied array, except for the members at specified positions.",
                     new SequenceType[] {
                             new FunctionParameterSequenceType("array", Type.ARRAY, Cardinality.EXACTLY_ONE, "The array"),
-                            new FunctionParameterSequenceType("position", Type.INTEGER, Cardinality.EXACTLY_ONE, "Position of the member to remove")
+                            new FunctionParameterSequenceType("positions", Type.INTEGER, Cardinality.ZERO_OR_MORE, "Positions of the members to remove")
                     },
-                    new FunctionReturnSequenceType(Type.ARRAY, Cardinality.EXACTLY_ONE, "A new array containing all members except the one at $position")
+                    new FunctionReturnSequenceType(Type.ARRAY, Cardinality.EXACTLY_ONE, "A new array containing all members from $array except the members whose position (counting from 1) is present in the sequence $positions")
             ),
             new FunctionSignature(
                     new QName(Fn.INSERT_BEFORE.fname, ArrayModule.NAMESPACE_URI, ArrayModule.PREFIX),
@@ -293,23 +294,24 @@ public class ArrayFunction extends BasicFunction {
                     case REVERSE:
                         return array.reverse();
                     case FOR_EACH:
-                        return array.forEach(getFunction(args[1]));
+                        return getFunction(args[1], array::forEach);
                     case FILTER:
-                        return array.filter(getFunction(args[1]));
+                        return getFunction(args[1], array::filter);
                     case FOLD_LEFT:
-                        return array.foldLeft(getFunction(args[2]), args[1]);
+                        return getFunction(args[2], ref -> array.foldLeft(ref, args[1]));
                     case FOLD_RIGHT:
-                        return array.foldRight(getFunction(args[2]), args[1]);
+                        return getFunction(args[2], ref -> array.foldRight(ref, args[1]));
                     case FOR_EACH_PAIR:
-                        return array.forEachPair((ArrayType) args[1].itemAt(0), getFunction(args[2]));
+                        return getFunction(args[2], ref -> array.forEachPair((ArrayType) args[1].itemAt(0), ref));
                 }
         }
         throw new XPathException(this, "Unknown function: " + getName());
     }
 
-    private FunctionReference getFunction(Sequence arg) throws XPathException {
-        final FunctionReference ref = (FunctionReference) arg.itemAt(0);
-        ref.analyze(cachedContextInfo);
-        return ref;
+    private Sequence getFunction(Sequence arg, FunctionE<FunctionReference, Sequence, XPathException> action) throws XPathException {
+        try (final FunctionReference ref = (FunctionReference) arg.itemAt(0)) {
+            ref.analyze(cachedContextInfo);
+            return action.apply(ref);
+        }
     }
 }

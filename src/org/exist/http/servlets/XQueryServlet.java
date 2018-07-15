@@ -55,6 +55,7 @@ import org.exist.source.Source;
 import org.exist.source.SourceFactory;
 import org.exist.source.StringSource;
 import org.exist.storage.DBBroker;
+import org.exist.util.Configuration;
 import org.exist.util.MimeTable;
 import org.exist.util.serializer.XQuerySerializer;
 import org.exist.xmldb.XmldbURI;
@@ -173,22 +174,27 @@ public class XQueryServlet extends AbstractExistHttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse response) throws ServletException, IOException {
         HttpServletRequest request = null;
-        
-        //For POST request, If we are logging the requests we must wrap HttpServletRequest in HttpServletRequestWrapper
-        //otherwise we cannot access the POST parameters from the content body of the request!!! - deliriumsky
-        final Descriptor descriptor = Descriptor.getDescriptorSingleton();
-        if(descriptor != null) {
-            if(descriptor.allowRequestLogging()) {
-                request = new HttpServletRequestWrapper(req, getFormEncoding());
+        try {
+            //For POST request, If we are logging the requests we must wrap HttpServletRequest in HttpServletRequestWrapper
+            //otherwise we cannot access the POST parameters from the content body of the request!!! - deliriumsky
+            final Descriptor descriptor = Descriptor.getDescriptorSingleton();
+            if (descriptor != null) {
+                if (descriptor.allowRequestLogging()) {
+                    request = new HttpServletRequestWrapper(() -> (String) getPool().getConfiguration().getProperty(Configuration.BINARY_CACHE_CLASS_PROPERTY), req, getFormEncoding());
+                } else {
+                    request = req;
+                }
+
             } else {
                 request = req;
             }
-            
-        } else {
-            request = req;
+
+            process(request, response);
+        } finally {
+            if (request != null && request instanceof HttpServletRequestWrapper) {
+                ((HttpServletRequestWrapper)request).close();
+            }
         }
-        
-        process(request, response);
     }
     
     //-------------------------------
@@ -203,22 +209,27 @@ public class XQueryServlet extends AbstractExistHttpServlet {
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse response) throws ServletException, IOException {
         HttpServletRequest request = null;
-        
-        //For POST request, If we are logging the requests we must wrap HttpServletRequest in HttpServletRequestWrapper
-        //otherwise we cannot access the POST parameters from the content body of the request!!! - deliriumsky
-        final Descriptor descriptor = Descriptor.getDescriptorSingleton();
-        if(descriptor != null) {
-            if(descriptor.allowRequestLogging()) {
-                request = new HttpServletRequestWrapper(req, getFormEncoding());
+        try {
+            //For POST request, If we are logging the requests we must wrap HttpServletRequest in HttpServletRequestWrapper
+            //otherwise we cannot access the POST parameters from the content body of the request!!! - deliriumsky
+            final Descriptor descriptor = Descriptor.getDescriptorSingleton();
+            if (descriptor != null) {
+                if (descriptor.allowRequestLogging()) {
+                    request = new HttpServletRequestWrapper(() -> (String) getPool().getConfiguration().getProperty(Configuration.BINARY_CACHE_CLASS_PROPERTY), req, getFormEncoding());
+                } else {
+                    request = req;
+                }
+
             } else {
                 request = req;
             }
-            
-        } else {
-            request = req;
+
+            process(request, response);
+        } finally {
+            if (request != null && request instanceof HttpServletRequestWrapper) {
+                ((HttpServletRequestWrapper)request).close();
+            }
         }
-        
-        process(request, response);
     }
 
     @Override
@@ -336,6 +347,12 @@ public class XQueryServlet extends AbstractExistHttpServlet {
         } else if (urlAttrib != null) {
             try(final DBBroker broker = getPool().get(Optional.ofNullable(user))) {
                 source = SourceFactory.getSource(broker, moduleLoadPath, urlAttrib.toString(), true);
+                if (source == null) {
+                    final String msg = "Could not read source: context=" + moduleLoadPath + ", location=" + urlAttrib.toString();
+                    getLog().error(msg);
+                    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                    sendError(output, "Error", msg);
+                }
             } catch (final Exception e) {
                 getLog().error(e.getMessage(), e);
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);

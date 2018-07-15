@@ -97,7 +97,7 @@ public class MapFunction extends BasicFunction {
         "Constructs a new map by removing an entry from an existing map.",
         new SequenceType[] {
             new FunctionParameterSequenceType(MapModule.PREFIX, Type.MAP, Cardinality.EXACTLY_ONE, "The map"),
-            new FunctionParameterSequenceType("key", Type.STRING, Cardinality.EXACTLY_ONE, "The key to remove")
+            new FunctionParameterSequenceType("key", Type.ATOMIC, Cardinality.ZERO_OR_MORE, "The key to remove")
         },
         new SequenceType(Type.MAP, Cardinality.EXACTLY_ONE)
     );
@@ -215,7 +215,12 @@ public class MapFunction extends BasicFunction {
 
     private Sequence get(final Sequence[] args) {
         final AbstractMapType map = (AbstractMapType) args[0].itemAt(0);
-        return map.get((AtomicValue) args[1].itemAt(0));
+        final Sequence value = map.get((AtomicValue) args[1].itemAt(0));
+        if (value != null) {
+            return value;
+        } else {
+            return Sequence.EMPTY_SEQUENCE;
+        }
     }
 
     private Sequence put(final Sequence[] args) throws XPathException {
@@ -264,13 +269,14 @@ public class MapFunction extends BasicFunction {
 
     private Sequence forEach(final Sequence[] args) throws XPathException {
         final AbstractMapType map = (AbstractMapType) args[0].itemAt(0);
-        final FunctionReference ref = (FunctionReference) args[1].itemAt(0);
-        ref.analyze(cachedContextInfo);
-        final ValueSequence result = new ValueSequence();
-        for (final Map.Entry<AtomicValue, Sequence> entry : map) {
-            final Sequence s = ref.evalFunction(null, null, new Sequence[] { entry.getKey(), entry.getValue() });
-            result.addAll(s);
+        try (final FunctionReference ref = (FunctionReference) args[1].itemAt(0)) {
+            ref.analyze(cachedContextInfo);
+            final ValueSequence result = new ValueSequence();
+            for (final Map.Entry<AtomicValue, Sequence> entry : map) {
+                final Sequence s = ref.evalFunction(null, null, new Sequence[]{entry.getKey(), entry.getValue()});
+                result.addAll(s);
+            }
+            return result;
         }
-        return result;
     }
 }

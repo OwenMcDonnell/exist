@@ -22,18 +22,27 @@ package org.exist.xquery;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.lang.invoke.LambdaMetafactory;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.*;
 
+import javax.annotation.Nullable;
 import javax.xml.datatype.DatatypeConfigurationException;
 import javax.xml.datatype.DatatypeFactory;
 import javax.xml.datatype.Duration;
 import javax.xml.datatype.XMLGregorianCalendar;
 import javax.xml.stream.XMLStreamException;
 
+import com.evolvedbinary.j8fu.Either;
+import com.evolvedbinary.j8fu.function.TriFunctionE;
+import com.evolvedbinary.j8fu.function.QuadFunctionE;
+import com.evolvedbinary.j8fu.tuple.Tuple2;
 import com.ibm.icu.text.Collator;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -43,13 +52,7 @@ import org.exist.Namespaces;
 import org.exist.collections.Collection;
 import org.exist.debuggee.Debuggee;
 import org.exist.debuggee.DebuggeeJoint;
-import org.exist.dom.persistent.BinaryDocument;
-import org.exist.dom.persistent.DefaultDocumentSet;
-import org.exist.dom.persistent.DocumentImpl;
-import org.exist.dom.persistent.DocumentSet;
-import org.exist.dom.persistent.MutableDocumentSet;
-import org.exist.dom.persistent.NodeHandle;
-import org.exist.dom.persistent.NodeProxy;
+import org.exist.dom.persistent.*;
 import org.exist.dom.QName;
 import org.exist.http.servlets.RequestWrapper;
 import org.exist.interpreter.Context;
@@ -68,6 +71,9 @@ import org.exist.storage.DBBroker;
 import org.exist.storage.UpdateListener;
 import org.exist.storage.lock.Lock.LockMode;
 import org.exist.storage.lock.LockedDocumentMap;
+import org.exist.storage.txn.TransactionException;
+import org.exist.storage.txn.TransactionManager;
+import org.exist.storage.txn.Txn;
 import org.exist.util.Collations;
 import org.exist.util.Configuration;
 import org.exist.util.LockException;
@@ -82,10 +88,13 @@ import org.exist.xquery.value.*;
 import antlr.RecognitionException;
 import antlr.TokenStreamException;
 import antlr.collections.AST;
+import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
+import java.util.function.Predicate;
+
+import static com.evolvedbinary.j8fu.tuple.Tuple.Tuple;
+import static java.lang.invoke.MethodType.methodType;
 
 /**
  * The current XQuery execution context. Contains the static as well as the dynamic
@@ -173,6 +182,9 @@ public class XQueryContext implements BinaryValueManager, Context
     // Unresolved references to user defined functions
     protected Deque<FunctionCall>                      forwardReferences                                = new ArrayDeque<>();
 
+    // Inline functions using closures need to be cleared after execution
+    protected Deque<UserDefinedFunction>               closures                                         = new ArrayDeque<>();
+
     // List of options declared for this query at compile time - i.e. declare option
     protected List<Option>                             staticOptions                                    = null;
 
@@ -210,6 +222,28 @@ public class XQueryContext implements BinaryValueManager, Context
 
     /** The set of statically known documents specified as an array of paths to documents and collections. */
     protected XmldbURI[]                               staticCollections             = null;
+
+
+    /**
+     * The available documents of the dynamic context.
+     *
+     * {@see https://www.w3.org/TR/xpath-31/#dt-available-docs}.
+     */
+    private Map<String, TriFunctionE<DBBroker, Txn, String, Either<org.exist.dom.memtree.DocumentImpl, org.exist.dom.persistent.DocumentImpl>, XPathException>> dynamicDocuments = null;
+
+    /**
+     * The available test resources of the dynamic context.
+     *
+     * {@see https://www.w3.org/TR/xpath-31/#dt-available-text-resources}.
+     */
+    private Map<Tuple2<String, Charset>, QuadFunctionE<DBBroker, Txn, String, Charset, Reader, XPathException>> dynamicTextResources = null;
+
+    /**
+     * The available collections of the dynamic context.
+     *
+     * {@see https://www.w3.org/TR/xpath-31/#dt-available-collections}.
+     */
+    private Map<String, TriFunctionE<DBBroker, Txn, String, Sequence, XPathException>> dynamicCollections = null;
 
     /**
      * A set of documents which were modified during the query, usually through an XQuery update extension. The documents will be checked after the
@@ -457,6 +491,9 @@ public class XQueryContext implements BinaryValueManager, Context
         ctx.baseURISetInProlog       = this.baseURISetInProlog;
         ctx.staticDocumentPaths      = this.staticDocumentPaths;
         ctx.staticDocuments          = this.staticDocuments;
+        ctx.dynamicDocuments         = this.dynamicDocuments;
+        ctx.dynamicTextResources     = this.dynamicTextResources;
+        ctx.dynamicCollections       = this.dynamicCollections;
         ctx.moduleLoadPath           = this.moduleLoadPath;
         ctx.defaultFunctionNamespace = this.defaultFunctionNamespace;
         ctx.defaultElementNamespace  = this.defaultElementNamespace;
@@ -947,7 +984,7 @@ public class XQueryContext implements BinaryValueManager, Context
     {
         //Not sure for the 2nd clause : eXist forces the function NS as default.
         if( ( defaultFunctionNamespace != null ) && !defaultFunctionNamespace.equals( Function.BUILTIN_FUNCTION_NS ) && !defaultFunctionNamespace.equals( uri ) ) {
-            throw( new XPathException( "err:XQST0066: default function namespace is already set to: '" + defaultFunctionNamespace + "'" ) );
+            throw( new XPathException(ErrorCodes.XQST0066, "Default function namespace is already set to: '" + defaultFunctionNamespace + "'" ) );
         }
         defaultFunctionNamespace = uri;
     }
@@ -977,7 +1014,7 @@ public class XQueryContext implements BinaryValueManager, Context
     {
         // eXist forces the empty element NS as default.
         if( !defaultElementNamespaceSchema.equals( AnyURIValue.EMPTY_URI ) ) {
-            throw( new XPathException( "err:XQST0066: default function namespace schema is already set to: '" + defaultElementNamespaceSchema.getStringValue() + "'" ) );
+            throw( new XPathException(ErrorCodes.XQST0066, "Default function namespace schema is already set to: '" + defaultElementNamespaceSchema.getStringValue() + "'" ) );
         }
         defaultElementNamespaceSchema = new AnyURIValue( uri );
     }
@@ -1008,7 +1045,7 @@ public class XQueryContext implements BinaryValueManager, Context
     {
         // eXist forces the empty element NS as default.
         if( !defaultElementNamespace.equals( AnyURIValue.EMPTY_URI ) ) {
-            throw( new XPathException( "err:XQST0066: default element namespace is already set to: '" + defaultElementNamespace.getStringValue() + "'" ) );
+            throw( new XPathException(ErrorCodes.XQST0066, "Default element namespace is already set to: '" + defaultElementNamespace.getStringValue() + "'" ) );
         }
         defaultElementNamespace = new AnyURIValue( uri );
 
@@ -1039,7 +1076,7 @@ public class XQueryContext implements BinaryValueManager, Context
             uriTest = new URI( uri );
         }
         catch( final URISyntaxException e ) {
-            throw( new XPathException( "err:XQST0038: Unknown collation : '" + uri + "'" ) );
+            throw( new XPathException(ErrorCodes.XQST0038, "Unknown collation : '" + uri + "'" ) );
         }
 
         if( uri.startsWith( Collations.EXIST_COLLATION_URI ) || uri.startsWith( "?" ) || uriTest.isAbsolute() ) {
@@ -1091,6 +1128,26 @@ public class XQueryContext implements BinaryValueManager, Context
         staticDocuments = set;
     }
 
+    public void addDynamicallyAvailableDocument(final String uri, final TriFunctionE<DBBroker, Txn, String, Either<org.exist.dom.memtree.DocumentImpl, org.exist.dom.persistent.DocumentImpl>, XPathException> supplier) {
+        if (dynamicDocuments == null) {
+            dynamicDocuments = new HashMap<>();
+        }
+        dynamicDocuments.put(uri, supplier);
+    }
+
+    public void addDynamicallyAvailableTextResource(final String uri, final Charset encoding, final QuadFunctionE<DBBroker, Txn, String, Charset, Reader, XPathException> supplier) {
+        if (dynamicTextResources == null) {
+            dynamicTextResources = new HashMap<>();
+        }
+        dynamicTextResources.put(Tuple(uri, encoding), supplier);
+    }
+
+    public void addDynamicallyAvailableCollection(final String uri, final TriFunctionE<DBBroker, Txn, String, Sequence, XPathException> supplier) {
+        if (dynamicCollections == null) {
+            dynamicCollections = new HashMap<>();
+        }
+        dynamicCollections.put(uri, supplier);
+    }
 
     //TODO : not sure how these 2 options might/have to be related
     public void setCalendar( XMLGregorianCalendar newCalendar )
@@ -1165,13 +1222,12 @@ public class XQueryContext implements BinaryValueManager, Context
 
             // no path defined: return all documents in the db
             try {
-                getBroker().getAllXMLResources( ndocs );
-            } catch(final PermissionDeniedException pde) {
-                LOG.warn("Permission denied to read resource all resources" + pde.getMessage(), pde);
-                throw new XPathException("Permission denied to read resource all resources" + pde.getMessage(), pde);
+                getBroker().getAllXMLResources(ndocs);
+            } catch(final PermissionDeniedException | LockException e) {
+                LOG.warn(e);
+                throw new XPathException("Permission denied to read resource all resources: " + e.getMessage(), e);
             }
         } else {
-            DocumentImpl doc;
             Collection   collection;
 
             for( int i = 0; i < staticDocumentPaths.length; i++ ) {
@@ -1182,21 +1238,22 @@ public class XQueryContext implements BinaryValueManager, Context
                     if( collection != null ) {
                         collection.allDocs( getBroker(), ndocs, true);
                     } else {
-                        doc = getBroker().getXMLResource( staticDocumentPaths[i], LockMode.READ_LOCK );
+                        try(final LockedDocument lockedDocument = getBroker().getXMLResource( staticDocumentPaths[i], LockMode.READ_LOCK)) {
 
-                        if( doc != null ) {
+                            final DocumentImpl doc = lockedDocument == null ? null : lockedDocument.getDocument();
+                            if (doc != null) {
 
-                            if( doc.getPermissions().validate( 
-                            		getBroker().getCurrentSubject(), Permission.READ ) ) {
-                                
-                            	ndocs.add( doc );
+                                if (doc.getPermissions().validate(
+                                        getBroker().getCurrentSubject(), Permission.READ)) {
+
+                                    ndocs.add(doc);
+                                }
                             }
-                            doc.getUpdateLock().release( LockMode.READ_LOCK );
                         }
                     }
                 }
-                catch( final PermissionDeniedException e ) {
-                    LOG.warn( "Permission denied to read resource " + staticDocumentPaths[i] + ". Skipping it." );
+                catch(final PermissionDeniedException | LockException e) {
+                    LOG.warn("Permission denied to read resource " + staticDocumentPaths[i] + ". Skipping it.");
                 }
             }
         }
@@ -1206,6 +1263,57 @@ public class XQueryContext implements BinaryValueManager, Context
 
     public DocumentSet getStaticDocs() {
         return staticDocuments;
+    }
+
+    /**
+     * Get's a document from the "Available documents" of the
+     * dynamic context.
+     */
+    public @Nullable Sequence getDynamicallyAvailableDocument(final String uri) throws XPathException {
+        if (dynamicDocuments == null) {
+            return null;
+        }
+
+        final TriFunctionE<DBBroker, Txn, String, Either<org.exist.dom.memtree.DocumentImpl, DocumentImpl>, XPathException> docSupplier = dynamicDocuments.get(uri);
+        if (docSupplier == null) {
+            return null;
+        }
+
+        return docSupplier.apply(getBroker(), getBroker().getCurrentTransaction(), uri).fold(md -> (Sequence)md, pd -> (Sequence)pd);
+    }
+
+    /**
+     * Get's a text resource from the "Available text resources" of the
+     * dynamic context.
+     */
+    public @Nullable Reader getDynamicallyAvailableTextResource(final String uri, final Charset charset) throws XPathException {
+        if (dynamicTextResources == null) {
+            return null;
+        }
+
+        final QuadFunctionE<DBBroker, Txn, String, Charset, Reader, XPathException> textResourceSupplier = dynamicTextResources.get(Tuple(uri, charset));
+        if (textResourceSupplier == null) {
+            return null;
+        }
+
+        return textResourceSupplier.apply(getBroker(), getBroker().getCurrentTransaction(), uri, charset);
+    }
+
+    /**
+     * Get's a collection from the "Available collections" of the
+     * dynamic context.
+     */
+    public @Nullable Sequence getDynamicallyAvailableCollection(final String uri) throws XPathException {
+        if (dynamicCollections == null) {
+            return null;
+        }
+
+        final TriFunctionE<DBBroker, Txn, String, Sequence, XPathException> collectionSupplier = dynamicCollections.get(uri);
+        if (collectionSupplier == null) {
+            return null;
+        }
+
+        return collectionSupplier.apply(getBroker(), getBroker().getCurrentTransaction(), uri);
     }
 
     public ExtendedXMLStreamReader getXMLStreamReader( NodeValue nv ) throws XMLStreamException, IOException
@@ -1372,7 +1480,7 @@ public class XQueryContext implements BinaryValueManager, Context
             try {
                 Modification.checkFragmentation( this, modifiedDocuments );
             }
-            catch( final EXistException e ) {
+            catch( final LockException | EXistException e ) {
                 LOG.warn( "Error while checking modified documents: " + e.getMessage(), e );
             }
             modifiedDocuments = null;
@@ -1390,11 +1498,19 @@ public class XQueryContext implements BinaryValueManager, Context
             // do not reset the statically known documents
             staticDocumentPaths = null;
             staticDocuments     = null;
+            dynamicDocuments = null;
+            dynamicTextResources = null;
+            dynamicCollections = null;
         }
 
         if( !isShared ) {
             lastVar = null;
         }
+
+        // clear inline functions using closures
+        closures.forEach(func -> func.setClosureVariables(null));
+        closures.clear();
+
         fragmentStack = new Stack<MemTreeBuilder>();
         callStack.clear();
         protectedDocuments = null;
@@ -1666,7 +1782,8 @@ public class XQueryContext implements BinaryValueManager, Context
         try {
 
             // lookup the class
-            final Class<?> mClass = Class.forName( moduleClass );
+            final ClassLoader existClassLoader = getBroker().getBrokerPool().getClassLoader();
+            final Class<?> mClass = Class.forName(moduleClass, false, existClassLoader);
 
             if( !( Module.class.isAssignableFrom( mClass ) ) ) {
                 LOG.info( "failed to load module. " + moduleClass + " is not an instance of org.exist.xquery.Module." );
@@ -1684,14 +1801,17 @@ public class XQueryContext implements BinaryValueManager, Context
     }
 
 
-    protected Module instantiateModule( String namespaceURI, Class<Module> mClass, Map<String, Map<String, List<? extends Object>>> moduleParameters) {
+    protected Module instantiateModule( String namespaceURI, Class<Module> mClazz, Map<String, Map<String, List<? extends Object>>> moduleParameters) {
         Module module = null;
 
         try {
-
-            final Constructor<Module> cnstr = mClass.getConstructor(Map.class);
-            
-            module = cnstr.newInstance(moduleParameters.get(namespaceURI));
+            final MethodHandles.Lookup lookup = MethodHandles.lookup();
+            final MethodHandle methodHandle = lookup.findConstructor(mClazz, methodType(void.class, Map.class));
+            final java.util.function.Function<Map, Module> ctor = (java.util.function.Function<Map, Module>)
+                    LambdaMetafactory.metafactory(
+                            lookup, "apply", methodType(java.util.function.Function.class),
+                            methodHandle.type().erase(), methodHandle, methodHandle.type()).getTarget().invokeExact();
+            module = ctor.apply(moduleParameters.get(namespaceURI));
 
             if(namespaceURI != null && !module.getNamespaceURI().equals(namespaceURI)) {
                 LOG.warn( "the module declares a different namespace URI. Expected: " + namespaceURI + " found: " + module.getNamespaceURI() );
@@ -1704,16 +1824,13 @@ public class XQueryContext implements BinaryValueManager, Context
 
             modules.put(module.getNamespaceURI(), module);
             allModules.put(module.getNamespaceURI(), module);
-        } catch(final InstantiationException ie) {
-            LOG.warn("error while instantiating module class " + mClass.getName(), ie);
-        } catch(final IllegalAccessException iae) {
-            LOG.warn("error while instantiating module class " + mClass.getName(), iae);
-        } catch(final XPathException xpe) {
-            LOG.warn("error while instantiating module class " + mClass.getName(), xpe);
-        } catch(final NoSuchMethodException nsme) {
-            LOG.warn("error while instantiating module class " + mClass.getName(), nsme);
-        } catch(final InvocationTargetException ite) {
-            LOG.warn("error while instantiating module class " + mClass.getName(), ite);
+        } catch(final Throwable e) {
+            if (e instanceof InterruptedException) {
+                // NOTE: must set interrupted flag
+                Thread.currentThread().interrupt();
+            }
+
+            LOG.warn("error while instantiating module class " + mClazz.getName(), e);
         }
         
         return module;
@@ -2055,7 +2172,7 @@ public class XQueryContext implements BinaryValueManager, Context
      */
     public List<ClosureVariable> getLocalStack() {
 
-        final List<ClosureVariable> closure = new ArrayList<>(6);
+        List<ClosureVariable> closure = null;
 
     	final LocalVariable end = contextStack.isEmpty() ? null : contextStack.peek();
 
@@ -2065,6 +2182,9 @@ public class XQueryContext implements BinaryValueManager, Context
                 break;
             }
 
+            if (closure == null) {
+                closure = new ArrayList<>(6);
+            }
             closure.add( new ClosureVariable(var) );
         }
 
@@ -2447,7 +2567,7 @@ public class XQueryContext implements BinaryValueManager, Context
         // is then undefined, and any attempt to use its value may result in
         // an error [err:XPST0001].
         if( ( baseURI == null ) || baseURI.equals( AnyURIValue.EMPTY_URI ) ) {
-            //throw new XPathException("err:XPST0001: base URI of the static context  has not been assigned a value.");
+            //throw new XPathException(ErrorCodes.XPST0001, "Base URI of the static context  has not been assigned a value.");
             // We catch and resolve this to the XmlDbURI.ROOT_COLLECTION_URI
             // at least in DocumentImpl so maybe we should do it here./ljo
         }
@@ -2608,6 +2728,16 @@ public class XQueryContext implements BinaryValueManager, Context
     }
 
     /**
+     * Register a inline function using closure variables so it can be cleared
+     * after query execution.
+     *
+     * @param func an inline function definition using closure variables
+     */
+    public void pushClosure(final UserDefinedFunction func) {
+        closures.add(func);
+    }
+
+    /**
      * Returns the current size of the stack. This is used to determine where a variable has been declared.
      *
      * @return  current size of the stack
@@ -2736,11 +2866,9 @@ public class XQueryContext implements BinaryValueManager, Context
                                 locationUri = moduleLoadPathUri.resolveCollectionPath( locationUri );
                             }
 
-                            DocumentImpl sourceDoc = null;
+                            try (final LockedDocument lockedSourceDoc = getBroker().getXMLResource( locationUri.toCollectionPathURI(), LockMode.READ_LOCK)) {
 
-                            try {
-                                sourceDoc = getBroker().getXMLResource( locationUri.toCollectionPathURI(), LockMode.READ_LOCK );
-
+                                final DocumentImpl sourceDoc = lockedSourceDoc == null ? null : lockedSourceDoc.getDocument();
                                 if(sourceDoc == null) {
                                     throw moduleLoadException("Module location hint URI '" + location + "' does not refer to anything.", location);
                                 }
@@ -2756,10 +2884,6 @@ public class XQueryContext implements BinaryValueManager, Context
 
                             } catch(final PermissionDeniedException e) {
                                 throw moduleLoadException("Permission denied to read module source from location hint URI '" + location + ".", location, e);
-                            } finally {
-                                if(sourceDoc != null) {
-                                    sourceDoc.getUpdateLock().release(LockMode.READ_LOCK);
-                                }
                             }
                         } catch(final URISyntaxException e) {
                             throw moduleLoadException("Invalid module location hint URI '" + location + "'.", location, e);
@@ -2772,11 +2896,14 @@ public class XQueryContext implements BinaryValueManager, Context
 
                             //TODO: use URIs to ensure proper resolution of relative locations
                             moduleSource = SourceFactory.getSource( getBroker(), moduleLoadPath, location, true );
+                            if (moduleSource == null) {
+                                throw moduleLoadException("Source for module '" + namespaceURI + "' not found module location hint URI '" + location + "'.", location);
+                            }
 
                         } catch(final MalformedURLException e) {
                             throw moduleLoadException("Invalid module location hint URI '" + location + "'.", location, e);
                         } catch(final IOException e) {
-                            throw moduleLoadException("Source for module '" + namespaceURI + "' not found module location hint URI '" + location + "'.", location, e);
+                            throw moduleLoadException("Source for module '" + namespaceURI + "' could not be read, module location hint URI '" + location + "'.", location, e);
                         } catch(final PermissionDeniedException e) {
                             throw moduleLoadException("Permission denied to read module source from location hint URI '" + location + ".", location, e);
                         }
@@ -3533,19 +3660,56 @@ public class XQueryContext implements BinaryValueManager, Context
         return isVarDeclared( Debuggee.SESSION );
     }
 
-    private List<BinaryValue> binaryValueInstances;
-    
+    private Deque<BinaryValue> binaryValueInstances;
+
+    public void enterEnclosedExpr() {
+        if(binaryValueInstances != null) {
+            final Iterator<BinaryValue> it = binaryValueInstances.descendingIterator();
+            while (it.hasNext()) {
+                it.next().incrementSharedReferences();
+            }
+        }
+    }
+
+    public void exitEnclosedExpr() {
+        if(binaryValueInstances != null) {
+            final Iterator<BinaryValue> it = binaryValueInstances.iterator();
+            List<BinaryValue> destroyable = null;
+            while (it.hasNext()) {
+                try {
+                    final BinaryValue bv = it.next();
+                    bv.close(); // really just decrements a reference
+                    if(bv.isClosed()) {
+                        if(destroyable == null) {
+                            destroyable = new ArrayList<>();
+                        }
+                        destroyable.add(bv);
+                    }
+                } catch (final IOException e) {
+                    LOG.warn("Unable to close binary reference on exiting enclosed expression: " + e.getMessage(), e);
+                }
+            }
+
+            // eagerly cleanup those BinaryValues that are not used outside the EnclosedExpr (to release memory)
+            if(destroyable != null) {
+                for(final BinaryValue bvd : destroyable) {
+                    binaryValueInstances.remove(bvd);
+                }
+            }
+        }
+    }
+
     @Override
     public void registerBinaryValueInstance(final BinaryValue binaryValue) {
         if(binaryValueInstances == null) {
-             binaryValueInstances = new ArrayList<>();
+             binaryValueInstances = new ArrayDeque<>();
         }
 
         if(cleanupTasks.isEmpty() || !cleanupTasks.stream().filter(ct -> ct instanceof BinaryValueCleanupTask).findFirst().isPresent()) {
             cleanupTasks.add(new BinaryValueCleanupTask());
         }
 
-        binaryValueInstances.add(binaryValue);
+        binaryValueInstances.push(binaryValue);
     }
 
     /**
@@ -3553,18 +3717,31 @@ public class XQueryContext implements BinaryValueManager, Context
      * of any {@link BinaryValue} which have been used during
      * query execution
      */
-    private static class BinaryValueCleanupTask implements CleanupTask {
+    public static class BinaryValueCleanupTask implements CleanupTask {
         @Override
-        public void cleanup(final XQueryContext context) {
+        public void cleanup(final XQueryContext context, final Predicate<Object> predicate) {
             if (context.binaryValueInstances != null) {
-                for (final BinaryValue bv : context.binaryValueInstances) {
+                List<BinaryValue> removable = null;
+                for(final Iterator<BinaryValue> iterator = context.binaryValueInstances.iterator(); iterator.hasNext();) {
+                    final BinaryValue bv = iterator.next();
                     try {
-                        bv.close();
-                    } catch (final IOException ioe) {
-                        LOG.error("Unable to close binary value: " + ioe.getMessage(), ioe);
+                        if (predicate.test(bv)) {
+                            bv.close();
+                            if(removable == null) {
+                                removable = new ArrayList<>();
+                            }
+                            removable.add(bv);
+                        }
+                    } catch (final IOException e) {
+                        LOG.error("Unable to close binary value: " + e.getMessage(), e);
                     }
                 }
-                context.binaryValueInstances.clear();
+
+                if(removable != null) {
+                    for(final BinaryValue bv : removable) {
+                        context.binaryValueInstances.remove(bv);
+                    }
+                }
             }
         }
     }
@@ -3574,15 +3751,9 @@ public class XQueryContext implements BinaryValueManager, Context
         return (String) getBroker().getConfiguration().getProperty(Configuration.BINARY_CACHE_CLASS_PROPERTY);
     }
 
-    public void destroyBinaryValue(BinaryValue value) {
-        if (binaryValueInstances != null) {
-            for (int i = binaryValueInstances.size() - 1; i > -1; i--) {
-                final BinaryValue bv = binaryValueInstances.get(i);
-                if (bv == value) {
-                    binaryValueInstances.remove(i);
-                    return;
-                }
-            }
+    public void destroyBinaryValue(final BinaryValue value) {
+        if (binaryValueInstances != null && binaryValueInstances.contains(value)) {
+            binaryValueInstances.remove(value);
         }
     }
     
@@ -3671,14 +3842,14 @@ public class XQueryContext implements BinaryValueManager, Context
     }
     
     public interface CleanupTask {
-        void cleanup(final XQueryContext context);
+        void cleanup(final XQueryContext context, final Predicate<Object> predicate);
     }
     
     @Override
-    public void runCleanupTasks() {
+    public void runCleanupTasks(final Predicate<Object> predicate) {
         for(final CleanupTask cleanupTask : cleanupTasks) {
             try {
-                cleanupTask.cleanup(this);
+                cleanupTask.cleanup(this, predicate);
             } catch(final Throwable t) {
                 LOG.error("Cleaning up XQueryContext: Ignoring: " + t.getMessage(), t);
             }

@@ -32,6 +32,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.EXistException;
 import org.exist.collections.Collection;
+import org.exist.collections.ManagedLocks;
 import org.exist.collections.triggers.DocumentTrigger;
 import org.exist.collections.triggers.DocumentTriggers;
 import org.exist.collections.triggers.TriggerException;
@@ -47,6 +48,7 @@ import org.exist.source.StringSource;
 import org.exist.storage.DBBroker;
 import org.exist.storage.XQueryPool;
 import org.exist.storage.lock.Lock;
+import org.exist.storage.lock.ManagedDocumentLock;
 import org.exist.storage.txn.Txn;
 import org.exist.util.LockException;
 import org.exist.util.hashtable.Int2ObjectHashMap;
@@ -56,7 +58,11 @@ import org.exist.xquery.XQuery;
 import org.exist.xquery.XQueryContext;
 import org.exist.xquery.value.Sequence;
 import org.exist.xquery.value.Type;
+import org.w3c.dom.Attr;
+import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+
+import javax.annotation.Nullable;
 
 /**
  * Base class for all XUpdate modifications.
@@ -83,7 +89,7 @@ public abstract class Modification {
 	protected DocumentSet docs;
 	protected Map<String, String> namespaces;
 	protected Map<String, Object> variables;
-	protected DocumentSet lockedDocuments = null;
+	protected ManagedLocks<ManagedDocumentLock> lockedDocumentsLocks = null;
 	protected MutableDocumentSet modifiedDocuments = new DefaultDocumentSet();
     protected Int2ObjectHashMap<DocumentTrigger> triggers;
 
@@ -215,12 +221,12 @@ public abstract class Modification {
 		globalLock.lock();
 	    try {
 	        final NodeList nl = select(docs);
-	        lockedDocuments = ((NodeSet)nl).getDocumentSet();
+	        final DocumentSet lockedDocuments = ((NodeSet)nl).getDocumentSet();
 	        
 		    // acquire a lock on all documents
 	        // we have to avoid that node positions change
 	        // during the modification
-	        lockedDocuments.lock(broker, true, false);
+	        lockedDocumentsLocks = lockedDocuments.lock(broker, true);
 	        
 		    final StoredNode ql[] = new StoredNode[nl.getLength()];		    
 			for (int i = 0; i < ql.length; i++) {
@@ -246,22 +252,26 @@ public abstract class Modification {
 	 * database modification to call the eventual triggers
 	 * @throws TriggerException 
 	 */
-	protected final void unlockDocuments(Txn transaction) throws TriggerException
+	protected final void unlockDocuments(final Txn transaction) throws TriggerException
 	{
-		if(lockedDocuments == null)
-			{return;}
-		
-		//finish Trigger
-		final Iterator<DocumentImpl> iterator = modifiedDocuments.getDocumentIterator();
-		while (iterator.hasNext()) {
-			finishTrigger(transaction, iterator.next());
+		if(lockedDocumentsLocks == null) {
+			return;
 		}
-        triggers.clear();
-        modifiedDocuments.clear();
-		
-		//unlock documents
-	    lockedDocuments.unlock(true);
-	    lockedDocuments = null;
+
+		try {
+			//finish Trigger
+			final Iterator<DocumentImpl> iterator = modifiedDocuments.getDocumentIterator();
+			while (iterator.hasNext()) {
+				finishTrigger(transaction, iterator.next());
+			}
+		} finally {
+			triggers.clear();
+			modifiedDocuments.clear();
+
+			//unlock documents
+	        lockedDocumentsLocks.close();
+	        lockedDocumentsLocks = null;
+		}
 	}
 	
 	/**
@@ -297,7 +307,7 @@ public abstract class Modification {
             
 	    final Collection col = doc.getCollection();
 	        
-            final DocumentTrigger trigger = new DocumentTriggers(broker, col);
+            final DocumentTrigger trigger = new DocumentTriggers(broker, transaction, col);
             
             trigger.beforeUpdateDocument(broker, transaction, doc);
             triggers.put(doc.getDocId(), trigger);
@@ -320,5 +330,22 @@ public abstract class Modification {
 	public String toString() {
 		//		buf.append(XMLUtil.dump(content));
 		return "<xu:" + getName() + " select=\"" + selectStmt + "\">" + "</xu:" +	getName() +	">";
+	}
+
+	/**
+	 * Get's the parent of the node.
+	 *
+	 * @param node The node of which to retrieve the parent.
+	 *
+	 * @return the parent node, or null if not available
+	 */
+	protected @Nullable Node getParent(@Nullable final Node node) {
+		if (node == null) {
+			return null;
+		} else if (node instanceof Attr) {
+			return ((Attr) node).getOwnerElement();
+		} else {
+			return node.getParentNode();
+		}
 	}
 }

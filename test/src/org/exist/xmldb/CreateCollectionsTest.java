@@ -21,7 +21,7 @@
  */
 package org.exist.xmldb;
 
-import java.io.*;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -189,13 +189,10 @@ public class CreateCollectionsTest  {
         final Resource res = testCollection.createResource(file.getFileName().toString(), "BinaryResource");
         assertNotNull("store binary Resource From File", res);
         // Get an array of bytes from the file:
-        try(final ByteArrayOutputStream os = new ByteArrayOutputStream()) {
-            Files.copy(file, os);
-            final byte[] data = os.toByteArray();
-            res.setContent(data);
-            testCollection.storeResource(res);
-            return data;
-        }
+        final byte[] data = Files.readAllBytes(file);
+        res.setContent(data);
+        testCollection.storeResource(res);
+        return data;
     }
 
     @Test

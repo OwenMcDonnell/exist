@@ -1,19 +1,19 @@
 package org.expath.exist;
 
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.dom.persistent.BinaryDocument;
 import org.exist.dom.QName;
 import org.exist.dom.persistent.DocumentImpl;
 import org.exist.dom.memtree.MemTreeBuilder;
+import org.exist.dom.persistent.LockedDocument;
 import org.exist.security.PermissionDeniedException;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.*;
 import org.exist.xquery.value.*;
 import org.exist.storage.lock.Lock.LockMode;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -111,14 +111,12 @@ public class ZipFileFunctions extends BasicFunction {
         ZipFileSource zipFileSource =  new ZipFileFromDb(uri);
         ZipInputStream zis = null;
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-
-        HashMap<String, BinaryValue> binariesTable = new HashMap<String, BinaryValue>(paths.length);
+        Map<String, BinaryValue> binariesTable = new HashMap<>(paths.length);
         for (int i = 0; i < paths.length; i++) {
             binariesTable.put(paths[i], binaries[i]);
         }
 
-        try
+        try(final FastByteArrayOutputStream baos = new FastByteArrayOutputStream();)
         {
             zis = zipFileSource.getStream();
             ZipOutputStream zos = new ZipOutputStream(baos); // zos is the output - the result
@@ -157,7 +155,8 @@ public class ZipFileFunctions extends BasicFunction {
             zos.close();
             zis.close();
 
-            return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), new ByteArrayInputStream(baos.toByteArray()));
+            return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), baos.toFastByteInputStream());
+
         } catch (IOException e) {
             logger.error(e.getMessage(), e);
             throw new XPathException("IO Exception in zip:update");
@@ -234,13 +233,12 @@ public class ZipFileFunctions extends BasicFunction {
 
     // copied from
     public interface ZipFileSource {
-        public ZipInputStream getStream() throws IOException, PermissionDeniedException;
-
-        public void close();
+        ZipInputStream getStream() throws IOException, PermissionDeniedException;
+        void close();
     }
 
     private class ZipFileFromDb implements ZipFileSource {
-        private BinaryDocument binaryDoc = null;
+        private LockedDocument binaryDoc = null;
         private final XmldbURI uri;
 
         public ZipFileFromDb(XmldbURI uri) {
@@ -249,33 +247,32 @@ public class ZipFileFunctions extends BasicFunction {
 
         @Override
         public ZipInputStream getStream() throws IOException, PermissionDeniedException {
-
             if (binaryDoc == null) {
                 binaryDoc = getBinaryDoc();
             }
 
-            return new ZipInputStream(context.getBroker().getBinaryResource(binaryDoc));
+            return new ZipInputStream(context.getBroker().getBinaryResource((BinaryDocument)binaryDoc.getDocument()));
         }
 
         @Override
         public void close() {
             if (binaryDoc != null) {
-                binaryDoc.getUpdateLock().release(LockMode.READ_LOCK);
+                binaryDoc.close();
             }
         }
 
-        private BinaryDocument getBinaryDoc() throws PermissionDeniedException {
-            final DocumentImpl doc = context.getBroker().getXMLResource(uri, LockMode.READ_LOCK);
-            if (doc == null) {
+        private LockedDocument getBinaryDoc() throws PermissionDeniedException {
+            final LockedDocument lockedDocment = context.getBroker().getXMLResource(uri, LockMode.READ_LOCK);
+            if (lockedDocment == null) {
                 return null;
             }
 
-            if(doc.getResourceType() != DocumentImpl.BINARY_FILE) {
-                doc.getUpdateLock().release(LockMode.READ_LOCK);
+            if(lockedDocment.getDocument().getResourceType() != DocumentImpl.BINARY_FILE) {
+                lockedDocment.close();
                 return null;
             }
 
-            return (BinaryDocument) doc;
+            return lockedDocment;
         }
     }
 

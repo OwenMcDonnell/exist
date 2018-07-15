@@ -24,7 +24,6 @@ package org.exist.xquery.modules.image;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.commons.io.output.ByteArrayOutputStream;
 
 import java.awt.Toolkit;
 import java.awt.Graphics2D;
@@ -32,10 +31,11 @@ import java.awt.Image;
 import java.awt.image.BufferedImage;
 import java.awt.image.CropImageFilter;
 import java.awt.image.FilteredImageSource;
-import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import javax.imageio.ImageIO;
 
 import org.exist.dom.QName;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xquery.BasicFunction;
 import org.exist.xquery.Cardinality;
 import org.exist.xquery.FunctionSignature;
@@ -132,13 +132,14 @@ public class CropFunction extends BasicFunction {
         String formatName = mimeType.substring(mimeType.indexOf("/")+1);
 
         //TODO currently ONLY tested for JPEG!!!
-        Image image = null;
         BufferedImage bImage = null;
-        try {
+        try (InputStream inputStream = ((BinaryValue) args[0].itemAt(0)).getInputStream();) {
             //get the image data
-            image = ImageIO.read(((BinaryValue)args[0].itemAt(0)).getInputStream());
+            Image image = ImageIO.read(inputStream);
+
             //			image = ImageModule.getImage((Base64BinaryValueType)args[0].itemAt(0));
             //      			image = ImageIO.read(new ByteArrayInputStream(getImageData((Base64BinaryValueType)args[0].itemAt(0))));
+
             if(image == null) {
                 logger.error("Unable to read image data!");
                 return Sequence.EMPTY_SEQUENCE;
@@ -149,6 +150,7 @@ public class CropFunction extends BasicFunction {
             if(cropImage instanceof BufferedImage) {
                 // just in case cropImage is allready an BufferedImage
                 bImage = (BufferedImage)cropImage;
+
             } else {
                 bImage = new BufferedImage(cropImage.getHeight(null),
                 cropImage.getWidth(null),BufferedImage.TYPE_INT_RGB);
@@ -157,11 +159,12 @@ public class CropFunction extends BasicFunction {
                 g.dispose();
             }
 
-            ByteArrayOutputStream os = new ByteArrayOutputStream();
-            ImageIO.write(bImage, formatName, os);
+            try (final FastByteArrayOutputStream os = new FastByteArrayOutputStream()) {
+                ImageIO.write(bImage, formatName, os);
 
-            //return the new croped image data
-            return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), new ByteArrayInputStream(os.toByteArray()));
+                //return the new croped image data
+                return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), os.toFastByteInputStream());
+            }
 
         } catch(Exception e) {
             throw new XPathException(this, e.getMessage());

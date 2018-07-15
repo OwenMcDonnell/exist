@@ -19,23 +19,18 @@
  */
 package org.exist.xmldb;
 
-import java.util.Date;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 
 import org.exist.dom.persistent.DocumentImpl;
-import org.exist.security.ACLPermission;
-import org.exist.security.Group;
-import org.exist.security.Permission;
-import org.exist.security.PermissionDeniedException;
-import org.exist.security.Subject;
-import org.exist.security.Account;
-import org.exist.security.User;
+import org.exist.security.*;
 import org.exist.security.SecurityManager;
 import org.exist.security.internal.aider.ACEAider;
 import org.exist.security.internal.aider.UserAider;
 import org.exist.storage.BrokerPool;
+import org.exist.storage.DBBroker;
+import org.exist.storage.txn.Txn;
 import com.evolvedbinary.j8fu.function.FunctionE;
+import org.exist.storage.lock.ManagedDocumentLock;
 import org.exist.xmldb.function.LocalXmldbCollectionFunction;
 import org.exist.xmldb.function.LocalXmldbDocumentFunction;
 import org.exist.xmldb.function.LocalXmldbFunction;
@@ -43,6 +38,8 @@ import org.xmldb.api.base.Collection;
 import org.xmldb.api.base.ErrorCodes;
 import org.xmldb.api.base.Resource;
 import org.xmldb.api.base.XMLDBException;
+
+import javax.annotation.Nullable;
 
 /**
  * Local Implementation (i.e. embedded) of an eXist-specific service
@@ -110,53 +107,59 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     @Override
     public void setPermissions(final Resource resource, final Permission perm) throws XMLDBException {
         modify(resource).apply((document, broker, transaction) -> {
-            document.setPermissions(perm);
+            PermissionFactory.chown(broker, document, Optional.of(perm.getOwner().getName()), Optional.of(perm.getGroup().getName()));
+            PermissionFactory.chmod(broker, document, Optional.of(perm.getMode()), getAces(perm));
             return null;
         });
     }
 
     @Override
     public void setPermissions(final Collection child, final Permission perm) throws XMLDBException {
-        final XmldbURI childUri = XmldbURI.create(child.getName());
-        updateCollection(childUri).apply((collection, broker, transaction) -> {
-            collection.setPermissions(perm);
+        withDb((broker, transaction) -> {
+            final XmldbURI childUri = getCollectionUri(broker, transaction, child);
+            updateCollection(broker, transaction, childUri).apply((collection, broker1, transaction1) -> {
+                PermissionFactory.chown(broker, collection, Optional.of(perm.getOwner().getName()), Optional.of(perm.getGroup().getName()));
+                PermissionFactory.chmod(broker, collection, Optional.of(perm.getMode()), getAces(perm));
+                return null;
+            });
             return null;
         });
     }
     
     @Override
     public void setPermissions(final Collection child, final String owner, final String group, final int mode, final List<ACEAider> aces) throws XMLDBException {
-        final XmldbURI childUri = XmldbURI.create(child.getName());
-        updateCollection(childUri).apply((collection, broker, transaction) -> {
-            final Permission permission = collection.getPermissionsNoLock();
-            permission.setOwner(owner);
-            permission.setGroup(group);
-            permission.setMode(mode);
-            if (permission instanceof ACLPermission) {
-                final ACLPermission aclPermission = (ACLPermission) permission;
-                aclPermission.clear();
-                for (final ACEAider ace : aces) {
-                    aclPermission.addACE(ace.getAccessType(), ace.getTarget(), ace.getWho(), ace.getMode());
-                }
-            }
+        withDb((broker, transaction) -> {
+            final XmldbURI childUri = getCollectionUri(broker, transaction, child);
+            updateCollection(broker, transaction, childUri).apply((collection, broker1, transaction1) -> {
+                final Permission permission = collection.getPermissionsNoLock();
+                PermissionFactory.chown(broker, collection, Optional.ofNullable(owner), Optional.ofNullable(group));
+                PermissionFactory.chmod(broker, collection, Optional.of(mode), Optional.ofNullable(aces));
+                return null;
+            });
             return null;
         });
     }
-        
+
+    private Optional<List<ACEAider>> getAces(@Nullable final Permission permission) {
+        final Optional<List<ACEAider>> maybeAces;
+        if (permission != null && permission instanceof ACLPermission) {
+            final ACLPermission aclPerm = (ACLPermission)permission;
+            final List<ACEAider> aces = new ArrayList<>(aclPerm.getACECount());
+            for (int i = 0; i < aclPerm.getACECount(); i++) {
+                aces.add(new ACEAider(aclPerm.getACEAccessType(i), aclPerm.getACETarget(i), aclPerm.getACEWho(i), aclPerm.getACEMode(i)));
+            }
+            maybeAces = Optional.of(aces);
+        } else {
+            maybeAces = Optional.empty();
+        }
+        return maybeAces;
+    }
+
     @Override
     public void setPermissions(final Resource resource, final String owner, final String group, final int mode, final List<ACEAider> aces) throws XMLDBException {
         modify(resource).apply((document, broker, transaction) -> {
-            final Permission permission = document.getPermissions();
-            permission.setOwner(owner);
-            permission.setGroup(group);
-            permission.setMode(mode);
-            if (permission instanceof ACLPermission) {
-                final ACLPermission aclPermission = (ACLPermission) permission;
-                aclPermission.clear();
-                for (final ACEAider ace : aces) {
-                    aclPermission.addACE(ace.getAccessType(), ace.getTarget(), ace.getWho(), ace.getMode());
-                }
-            }
+            PermissionFactory.chown(broker, document, Optional.ofNullable(owner), Optional.ofNullable(group));
+            PermissionFactory.chmod(broker, document, Optional.of(mode), Optional.ofNullable(aces));
             return null;
         });
     }
@@ -165,7 +168,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     public void chmod(final String modeStr) throws XMLDBException {
         final XmldbURI collUri = collection.getPathURI();
         updateCollection(collUri).apply((collection, broker, transaction) -> {
-            collection.setPermissions(modeStr);
+            PermissionFactory.chmod_str(broker, collection, Optional.ofNullable(modeStr), Optional.empty());
             return null;
         });
     }
@@ -173,7 +176,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     @Override
     public void chmod(final Resource resource, final int mode) throws XMLDBException {
         modify(resource).apply((document, broker, transaction) -> {
-            document.getPermissions().setMode(mode);
+            PermissionFactory.chmod(broker, document, Optional.of(mode), Optional.empty());
             return null;
         });
     }
@@ -182,7 +185,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     public void chmod(final int mode) throws XMLDBException {
         final XmldbURI collUri = collection.getPathURI();
         updateCollection(collUri).apply((collection, broker, transaction) -> {
-            collection.setPermissions(mode);
+            PermissionFactory.chmod(broker, collection, Optional.of(mode), Optional.empty());
             return null;
         });
     }
@@ -190,7 +193,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     @Override
     public void chmod(final Resource resource, final String modeStr) throws XMLDBException {
         modify(resource).apply((document, broker, transaction) -> {
-            document.getPermissions().setMode(modeStr);
+            PermissionFactory.chmod_str(broker, document, Optional.ofNullable(modeStr), Optional.empty());
             return null;
         });
     }
@@ -199,8 +202,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     public void chgrp(final String group) throws XMLDBException {
         final XmldbURI collUri = collection.getPathURI();
         updateCollection(collUri).apply((collection, broker, transaction) -> {
-            final Permission permission = collection.getPermissionsNoLock();
-            permission.setGroup(group);
+            PermissionFactory.chown(broker, collection, Optional.empty(), Optional.ofNullable(group));
             return null;
         });
     }
@@ -209,8 +211,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     public void chown(final Account u) throws XMLDBException {
         final XmldbURI collUri = collection.getPathURI();
         updateCollection(collUri).apply((collection, broker, transaction) -> {
-            final Permission permission = collection.getPermissionsNoLock();
-            permission.setOwner(u);
+            PermissionFactory.chown(broker, collection, Optional.ofNullable(u).map(Account::getName), Optional.empty());
             return null;
         });
     }
@@ -219,9 +220,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     public void chown(final Account u, final String group) throws XMLDBException {
         final XmldbURI collUri = collection.getPathURI();
         updateCollection(collUri).apply((collection, broker, transaction) -> {
-            final Permission permission = collection.getPermissionsNoLock();
-            permission.setOwner(u);
-            permission.setGroup(group);
+            PermissionFactory.chown(broker, collection, Optional.ofNullable(u).map(Account::getName), Optional.ofNullable(group));
             return null;
         });
     }
@@ -229,7 +228,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     @Override
     public void chgrp(final Resource resource, final String group) throws XMLDBException {
         modify(resource).apply((document, broker, transaction) -> {
-            document.getPermissions().setGroup(group);
+            PermissionFactory.chown(broker, document, Optional.empty(), Optional.ofNullable(group));
             return null;
         });
     }
@@ -237,7 +236,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     @Override
     public void chown(final Resource resource, final Account u) throws XMLDBException {
         modify(resource).apply((document, broker, transaction) -> {
-            document.getPermissions().setOwner(u);
+            PermissionFactory.chown(broker, document, Optional.ofNullable(u).map(Account::getName), Optional.empty());
             return null;
         });
     }
@@ -245,8 +244,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     @Override
     public void chown(final Resource resource, final Account u, final String group) throws XMLDBException {
         modify(resource).apply((document, broker, transaction) -> {
-            document.getPermissions().setOwner(u);
-            document.getPermissions().setGroup(group);
+            PermissionFactory.chown(broker, document, Optional.ofNullable(u).map(Account::getName), Optional.ofNullable(group));
             return null;
         });
     }
@@ -353,16 +351,18 @@ public class LocalUserManagementService extends AbstractLocalService implements 
     public Permission[] listResourcePermissions() throws XMLDBException {
         final XmldbURI collectionUri = collection.getPathURI();
         return this.<Permission[]>read(collectionUri).apply((collection, broker, transaction) -> {
-            if(!collection.getPermissionsNoLock().validate(user, Permission.READ)) {
+            if (!collection.getPermissionsNoLock().validate(user, Permission.READ)) {
                 return new Permission[0];
             }
 
             final Permission perms[] = new Permission[collection.getDocumentCount(broker)];
             final Iterator<DocumentImpl> itDocument = collection.iterator(broker);
             int i = 0;
-            while(itDocument.hasNext()) {
+            while (itDocument.hasNext()) {
                 final DocumentImpl document = itDocument.next();
-                perms[i++] = document.getPermissions();
+                try(final ManagedDocumentLock documentLock = broker.getBrokerPool().getLockManager().acquireDocumentReadLock(document.getURI())) {
+                    perms[i++] = document.getPermissions();
+                }
             }
 
             return perms;
@@ -579,7 +579,7 @@ public class LocalUserManagementService extends AbstractLocalService implements 
         if (!manager.hasAdminPrivileges(user)) {
             throw new XMLDBException(ErrorCodes.PERMISSION_DENIED, " This operation is restricted to Admin users");
         } else {
-            return op -> op.andThen(this::withDb).apply(manager);
+            return op -> op.andThen((FunctionE<LocalXmldbFunction<R>, R, XMLDBException>)this::withDb).apply(manager);
         }
     }
 
@@ -600,6 +600,21 @@ public class LocalUserManagementService extends AbstractLocalService implements 
      */
     private <R> FunctionE<LocalXmldbCollectionFunction<R>, R, XMLDBException> updateCollection(final XmldbURI collectionUri) throws XMLDBException {
         return updateOp -> this.<R>modify(collectionUri).apply((collection, broker1, transaction1) -> {
+            final R result = updateOp.apply(collection, broker1, transaction1);
+            broker1.saveCollection(transaction1, collection);
+            return result;
+        });
+    }
+
+    /**
+     * Higher-order-function for updating a collection and its metadata
+     *
+     * @param broker
+     * @param transaction
+     * @param collectionUri The collection to perform read/write operations on
+     */
+    private <R> FunctionE<LocalXmldbCollectionFunction<R>, R, XMLDBException> updateCollection(final DBBroker broker, final Txn transaction, final XmldbURI collectionUri) throws XMLDBException {
+        return updateOp -> this.<R>modify(broker, transaction, collectionUri).apply((collection, broker1, transaction1) -> {
             final R result = updateOp.apply(collection, broker1, transaction1);
             broker1.saveCollection(transaction1, collection);
             return result;

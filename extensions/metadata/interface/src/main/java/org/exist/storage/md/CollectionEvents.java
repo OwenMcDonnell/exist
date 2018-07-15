@@ -41,7 +41,7 @@ import org.exist.util.LockException;
 public class CollectionEvents implements CollectionTrigger {
 
 	@Override
-	public void configure(DBBroker broker, Collection parent, Map<String, List<? extends Object>> parameters) throws TriggerException {
+	public void configure(DBBroker broker, Txn txn, Collection parent, Map<String, List<? extends Object>> parameters) throws TriggerException {
 	}
 
 	@Override
@@ -104,18 +104,15 @@ public class CollectionEvents implements CollectionTrigger {
 		final XmldbURI uri = collection.getURI();
 
 		for(Iterator<XmldbURI> i = collection.collectionIterator(broker); i.hasNext(); ) {
-            final XmldbURI childName = i.next();
-            //TODO : resolve URIs !!! name.resolve(childName)
-            final Collection child = broker.openCollection(uri.append(childName), LockMode.NO_LOCK);
-            if(child == null) {
+			final XmldbURI childName = i.next();
+			//TODO : resolve URIs !!! name.resolve(childName)
+			try (final Collection child = broker.openCollection(uri.append(childName), LockMode.NO_LOCK)) {
+				if (child == null) {
 //                LOG.warn("Child collection " + childName + " not found");
-            } else {
-                try {
-                	deleteCollectionRecursive(broker, child);
-                } finally {
-                    child.release(LockMode.NO_LOCK);
-                }
-            }
+				} else {
+					deleteCollectionRecursive(broker, child);
+				}
+			}
         }
 
 	}

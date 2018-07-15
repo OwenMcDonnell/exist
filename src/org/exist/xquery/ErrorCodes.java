@@ -197,7 +197,7 @@ public class ErrorCodes {
     public static final ErrorCode FOFD1340 = new W3CErrorCode("FOFD1340", "Invalid date/time formatting picture string");
     public static final ErrorCode FOFD1350 = new W3CErrorCode("FOFD1350", " Invalid date/time formatting component");
 
-    public static final ErrorCode XTDE1310 = new W3CErrorCode("XTDE1310", " Invalid decimal format picture string.");
+    public static final ErrorCode FODF1310 = new W3CErrorCode("FODF1310", " Invalid decimal format picture string.");
 	public static final ErrorCode FTDY0020 = new W3CErrorCode("FTDY0020", "");
 	
 	public static final ErrorCode FODC0006 = new W3CErrorCode("FODC0006", "String passed to fn:parse-xml is not a well-formed XML document.");
@@ -214,6 +214,8 @@ public class ErrorCodes {
     public static final ErrorCode FOJS0003 = new W3CErrorCode("FOJS0003", "JSON duplicate keys.");
 
     public static final ErrorCode FOUT1170 = new W3CErrorCode("FOUT1170", "Invalid $href argument to fn:unparsed-text() (etc.)");
+    public static final ErrorCode FOUT1190 = new W3CErrorCode("FOUT1190", "Cannot decode resource retrieved by fn:unparsed-text() (etc.)");
+    public static final ErrorCode FOUT1200 = new W3CErrorCode("FOUT1200", "Cannot infer encoding of resource retrieved by fn:unparsed-text() (etc.)");
     public static final ErrorCode FOQM0001 = new W3CErrorCode("FOQM0001", "Module URI is a zero-length string");
     public static final ErrorCode FOQM0002 = new W3CErrorCode("FOQM0002", "Module URI not found.");
     public static final ErrorCode FOQM0003 = new W3CErrorCode("FOQM0003", "Static error in dynamically-loaded XQuery module.");

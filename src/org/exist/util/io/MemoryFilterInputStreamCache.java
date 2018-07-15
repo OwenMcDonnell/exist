@@ -40,7 +40,7 @@ import java.io.InputStream;
  */
 public class MemoryFilterInputStreamCache extends AbstractFilterInputStreamCache {
 
-    private java.io.ByteArrayOutputStream cache = new java.io.ByteArrayOutputStream();
+    private FastByteArrayOutputStream cache = new FastByteArrayOutputStream();
 
     public MemoryFilterInputStreamCache(InputStream src) {
         super(src);

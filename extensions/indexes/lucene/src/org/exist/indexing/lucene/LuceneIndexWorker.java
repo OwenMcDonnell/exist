@@ -36,6 +36,7 @@ import org.apache.lucene.queryparser.flexible.standard.CommonQueryParserConfigur
 import org.apache.lucene.search.*;
 import org.apache.lucene.util.*;
 import org.exist.collections.Collection;
+import org.exist.dom.persistent.*;
 import org.exist.indexing.*;
 import org.exist.indexing.StreamListener.ReindexMode;
 import org.exist.indexing.lucene.PlainTextHighlighter.Offset;
@@ -43,16 +44,6 @@ import org.exist.indexing.lucene.PlainTextIndexConfig.PlainTextField;
 import org.exist.dom.QName;
 import org.exist.dom.memtree.MemTreeBuilder;
 import org.exist.dom.memtree.NodeImpl;
-import org.exist.dom.persistent.Match;
-import org.exist.dom.persistent.ElementImpl;
-import org.exist.dom.persistent.IStoredNode;
-import org.exist.dom.persistent.NodeProxy;
-import org.exist.dom.persistent.DocumentImpl;
-import org.exist.dom.persistent.NewArrayNodeSet;
-import org.exist.dom.persistent.DocumentSet;
-import org.exist.dom.persistent.AbstractCharacterData;
-import org.exist.dom.persistent.NodeSet;
-import org.exist.dom.persistent.AttrImpl;
 import org.exist.numbering.NodeId;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.*;
@@ -300,7 +291,7 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         boolean needToFilter = false;
         Match nextMatch = proxy.getMatches();
         while (nextMatch != null) {
-            if (nextMatch.getIndexId() == LuceneIndex.ID) {
+            if (nextMatch.getIndexId().equals(LuceneIndex.ID)) {
                 needToFilter = true;
                 break;
             }
@@ -728,11 +719,10 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                     // document is in a collection
                     if (isDocumentMatch(fDocUri, toBeMatchedURIs)) {
 
-                        DocumentImpl storedDoc = null;
-                        try {
+                        try(final LockedDocument lockedStoredDoc = context.getBroker().getXMLResource(XmldbURI.createInternal(fDocUri), LockMode.READ_LOCK)) {
                             // try to read document to check if user is allowed to access it
-                            storedDoc = context.getBroker().getXMLResource(XmldbURI.createInternal(fDocUri), LockMode.READ_LOCK);
-                            if (storedDoc == null) {
+
+                            if (lockedStoredDoc == null) {
                                 return;
                             }
 
@@ -764,10 +754,6 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
                             attribs.clear();
                         } catch (PermissionDeniedException e) {
                             // not allowed to read the document: ignore the match.
-                        } finally {
-                            if (storedDoc != null) {
-                                storedDoc.getUpdateLock().release(LockMode.READ_LOCK);
-                            }
                         }
                     }
                 }
@@ -971,7 +957,8 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
         List<QName> indexes = new ArrayList<>(20);
         if (qnames != null && !qnames.isEmpty()) {
             for (QName qname : qnames) {
-                if (qname.getLocalPart() == null || qname.getNamespaceURI() == null)
+                if (qname.getLocalPart() == null || qname.getLocalPart().equals(QName.WILDCARD)
+                        || qname.getNamespaceURI() == null || qname.getNamespaceURI().equals(QName.WILDCARD))
                     getDefinedIndexesFor(qname, indexes);
                 else
                     indexes.add(qname);
@@ -996,10 +983,12 @@ public class LuceneIndexWorker implements OrderedValuesIndex, QNamedKeysIndex {
 
     private static boolean matchQName(QName qname, QName candidate) {
         boolean match = true;
-        if (qname.getLocalPart() != null)
+        if (qname.getLocalPart() != null && (!qname.getLocalPart().equals(QName.WILDCARD))) {
             match = qname.getLocalPart().equals(candidate.getLocalPart());
-        if (match && qname.getNamespaceURI() != null && qname.getNamespaceURI().length() > 0)
+        }
+        if (match && qname.getNamespaceURI() != null && (!qname.getNamespaceURI().equals(QName.WILDCARD)) && qname.getNamespaceURI().length() > 0) {
             match = qname.getNamespaceURI().equals(candidate.getNamespaceURI());
+        }
         return match;
     }
 

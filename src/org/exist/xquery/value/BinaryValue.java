@@ -22,23 +22,25 @@
 package org.exist.xquery.value;
 
 import com.ibm.icu.text.Collator;
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.commons.io.output.CloseShieldOutputStream;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xquery.Constants.Comparison;
 import org.exist.xquery.XPathException;
 
 import java.io.*;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 /**
  * @author Adam Retter <adam@existsolutions.com>
  */
-public abstract class BinaryValue extends AtomicValue {
+public abstract class BinaryValue extends AtomicValue implements Closeable {
 
     private final static Logger LOG = LogManager.getLogger(BinaryValue.class);
 
-    protected final int READ_BUFFER_SIZE = 4 * 1024; //4kb
+    protected final int READ_BUFFER_SIZE = 16 * 1024; //16kb
 
     private final BinaryValueManager binaryValueManager;
     private final BinaryValueType binaryValueType;
@@ -134,8 +136,7 @@ public abstract class BinaryValue extends AtomicValue {
         }
 
         if (target == byte[].class) {
-            final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            try {
+            try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
                 streamBinaryTo(baos);
                 return (T) baos.toByteArray();
             } catch (final IOException ioe) {
@@ -213,9 +214,7 @@ public abstract class BinaryValue extends AtomicValue {
     //TODO ideally this should be moved out into serialization where we can stream the output from the buf/channel by calling streamTo()
     @Override
     public String getStringValue() throws XPathException {
-
-        final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-
+        final FastByteArrayOutputStream baos = new FastByteArrayOutputStream();
         try {
             streamTo(baos);
         } catch (final IOException ex) {
@@ -227,8 +226,7 @@ public abstract class BinaryValue extends AtomicValue {
                 LOG.error("Unable to close stream: {}", ioe.getMessage(), ioe);
             }
         }
-
-        return new String(baos.toByteArray());
+        return baos.toString(UTF_8);
     }
 
     /**
@@ -264,5 +262,8 @@ public abstract class BinaryValue extends AtomicValue {
 
     public abstract boolean isClosed();
 
-    public abstract void close() throws IOException;
+    /**
+     * Increments the number of shared references to this binary value.
+     */
+    public abstract void incrementSharedReferences();
 }

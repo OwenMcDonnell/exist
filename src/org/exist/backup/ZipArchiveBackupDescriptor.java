@@ -25,6 +25,7 @@ import org.exist.repo.RepoBackup;
 import org.exist.util.EXistInputSource;
 import org.exist.util.FileUtils;
 import org.exist.util.ZipEntryInputSource;
+import org.exist.util.io.TemporaryFileManager;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -83,6 +84,11 @@ public class ZipArchiveBackupDescriptor extends AbstractBackupDescriptor {
 
         if (descriptor == null) {
             throw new FileNotFoundException("Archive " + fileArchive.toAbsolutePath().toString() + " is not a valid eXist backup archive");
+        }
+
+        final Path fakeDbRoot = Paths.get("/db");
+        if (!fakeDbRoot.resolve(Paths.get(base)).normalize().startsWith(fakeDbRoot)) {
+            throw new IOException("Detected archive exit attack! zipFile=" + fileArchive.toAbsolutePath().normalize().toString());
         }
     }
 
@@ -171,7 +177,9 @@ public class ZipArchiveBackupDescriptor extends AbstractBackupDescriptor {
 
         if (ze != null) {
             properties = new Properties();
-            properties.load(archive.getInputStream(ze));
+            try (InputStream is = archive.getInputStream(ze)) {
+                properties.load(is);
+            }
         }
         return properties;
     }
@@ -183,7 +191,8 @@ public class ZipArchiveBackupDescriptor extends AbstractBackupDescriptor {
         if (ze == null) {
             return null;
         }
-        final Path temp = Files.createTempFile("expathrepo", "zip");
+        final TemporaryFileManager temporaryFileManager = TemporaryFileManager.getInstance();
+        final Path temp = temporaryFileManager.getTemporaryFile();
         try (final InputStream is = archive.getInputStream(ze)) {
             Files.copy(is, temp, StandardCopyOption.REPLACE_EXISTING);
         }

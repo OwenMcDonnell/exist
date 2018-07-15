@@ -21,7 +21,6 @@
  */
 package org.exist.webdav;
 
-import org.apache.commons.io.IOUtils;
 import org.exist.EXistException;
 import org.exist.collections.Collection;
 import org.exist.collections.IndexInfo;
@@ -35,13 +34,13 @@ import org.exist.storage.lock.Lock.LockMode;
 import org.exist.storage.txn.TransactionManager;
 import org.exist.storage.txn.Txn;
 import org.exist.util.*;
+import org.exist.util.io.*;
 import org.exist.webdav.exceptions.CollectionDoesNotExistException;
 import org.exist.webdav.exceptions.CollectionExistsException;
 import org.exist.xmldb.XmldbURI;
+import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URISyntaxException;
@@ -49,6 +48,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
  * Class for accessing the Collection class of the exist-db native API.
@@ -90,34 +91,26 @@ public class ExistCollection extends ExistResource {
             return;
         }
 
-        try (final DBBroker broker = brokerPool.get(Optional.of(subject))) {
-            // Get access to collection
-            Collection collection = null;
-            try {
-                collection = broker.openCollection(xmldbUri, LockMode.READ_LOCK);
+        try (final DBBroker broker = brokerPool.get(Optional.of(subject));
+                final Collection collection = broker.openCollection(xmldbUri, LockMode.READ_LOCK)) {
 
-                if (collection == null) {
-                    LOG.error(String.format("Collection for %s cannot be opened for metadata", xmldbUri));
-                    return;
-                }
-
-                // Retrieve some meta data
-                permissions = collection.getPermissionsNoLock();
-                readAllowed = permissions.validate(subject, Permission.READ);
-                writeAllowed = permissions.validate(subject, Permission.WRITE);
-                executeAllowed = permissions.validate(subject, Permission.EXECUTE);
-
-                creationTime = collection.getCreationTime();
-                lastModified = creationTime; // Collection does not have more information.
-
-                ownerUser = permissions.getOwner().getUsername();
-                ownerGroup = permissions.getGroup().getName();
-            } finally {
-                // Clean up collection
-                if (collection != null) {
-                    collection.release(LockMode.READ_LOCK);
-                }
+            if (collection == null) {
+                LOG.error(String.format("Collection for %s cannot be opened for metadata", xmldbUri));
+                return;
             }
+
+            // Retrieve some meta data
+            permissions = collection.getPermissionsNoLock();
+            readAllowed = permissions.validate(subject, Permission.READ);
+            writeAllowed = permissions.validate(subject, Permission.WRITE);
+            executeAllowed = permissions.validate(subject, Permission.EXECUTE);
+
+            creationTime = collection.getCreationTime();
+            lastModified = creationTime; // Collection does not have more information.
+
+            ownerUser = permissions.getOwner().getUsername();
+            ownerGroup = permissions.getGroup().getName();
+
         } catch (final PermissionDeniedException | EXistException pde) {
             LOG.error(pde);
         }
@@ -132,21 +125,13 @@ public class ExistCollection extends ExistResource {
     public List<XmldbURI> getCollectionURIs() {
         final List<XmldbURI> collectionURIs = new ArrayList<>();
 
-        try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject))) {
-            // Try to read as specified subject
-            Collection collection = null;
-            try {
-                collection = broker.openCollection(xmldbUri, LockMode.READ_LOCK);
-                // Get all collections
-                final Iterator<XmldbURI> collections = collection.collectionIteratorNoLock(broker); // QQ: use collectionIterator ?
-                while (collections.hasNext()) {
-                    collectionURIs.add(xmldbUri.append(collections.next()));
+        try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject));
+            final Collection collection = broker.openCollection(xmldbUri, LockMode.READ_LOCK)) {
+            // Get all collections
+            final Iterator<XmldbURI> collections = collection.collectionIteratorNoLock(broker); // QQ: use collectionIterator ?
+            while (collections.hasNext()) {
+                collectionURIs.add(xmldbUri.append(collections.next()));
 
-                }
-            } finally {
-                if (collection != null) {
-                    collection.release(LockMode.READ_LOCK);
-                }
             }
         } catch (final EXistException | PermissionDeniedException e) {
             LOG.error(e);
@@ -163,22 +148,13 @@ public class ExistCollection extends ExistResource {
     public List<XmldbURI> getDocumentURIs() {
         final List<XmldbURI> documentURIs = new ArrayList<>();
 
-        try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject))) {
-            Collection collection = null;
-            try {
-                // Try to read as specified subject
-                collection = broker.openCollection(xmldbUri, LockMode.READ_LOCK);
+        try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject));
+                final Collection collection = broker.openCollection(xmldbUri, LockMode.READ_LOCK)) {
 
-                // Get all documents
-                final Iterator<DocumentImpl> documents = collection.iteratorNoLock(broker); // QQ: use 'iterator'
-                while (documents.hasNext()) {
-                    documentURIs.add(documents.next().getURI());
-                }
-            } finally {
-                // Clean up resources
-                if (collection != null) {
-                    collection.release(LockMode.READ_LOCK);
-                }
+            // Get all documents
+            final Iterator<DocumentImpl> documents = collection.iteratorNoLock(broker); // QQ: use 'iterator'
+            while (documents.hasNext()) {
+                documentURIs.add(documents.next().getURI());
             }
         } catch (final PermissionDeniedException | EXistException e) {
             LOG.error(e);
@@ -198,15 +174,13 @@ public class ExistCollection extends ExistResource {
             LOG.debug(String.format("Deleting '%s'", xmldbUri));
         }
 
-        Collection collection = null;
-
         final TransactionManager txnManager = brokerPool.getTransactionManager();
 
         try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject));
-             final Txn txn = txnManager.beginTransaction()) {
+            final Txn txn = txnManager.beginTransaction();
+            final Collection collection = broker.openCollection(xmldbUri, LockMode.WRITE_LOCK)) {
 
             // Open collection if possible, else abort
-            collection = broker.openCollection(xmldbUri, LockMode.WRITE_LOCK);
             if (collection == null) {
                 txnManager.abort(txn);
                 return;
@@ -225,12 +199,7 @@ public class ExistCollection extends ExistResource {
             LOG.error(e);
         } finally {
 
-            // TODO: check if can be done earlier
-            if (collection != null) {
-                collection.release(LockMode.WRITE_LOCK);
-            }
-
-            if (LOG.isDebugEnabled()) {
+            if(LOG.isDebugEnabled()) {
                 LOG.debug("Finished delete");
             }
         }
@@ -243,16 +212,16 @@ public class ExistCollection extends ExistResource {
         }
 
         XmldbURI newCollection = xmldbUri.append(name);
-        Collection collection = null;
 
         final TransactionManager txnManager = brokerPool.getTransactionManager();
 
         try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject));
-             final Txn txn = txnManager.beginTransaction()) {
+            final Txn txn = txnManager.beginTransaction();
+            final Collection collection = broker.openCollection(newCollection, LockMode.WRITE_LOCK)) {
 
             // Check if collection exists. not likely to happen since availability is
             // checked by ResourceFactory
-            collection = broker.openCollection(newCollection, LockMode.WRITE_LOCK);
+
             if (collection != null) {
                 final String msg = "Collection already exists";
 
@@ -264,15 +233,16 @@ public class ExistCollection extends ExistResource {
             }
 
             // Create collection
-            Collection created = broker.getOrCreateCollection(txn, newCollection);
-            broker.saveCollection(txn, created);
-            broker.flush();
+            try (final Collection created = broker.getOrCreateCollection(txn, newCollection)) {
+                broker.saveCollection(txn, created);
+                broker.flush();
 
-            // Commit change
-            txnManager.commit(txn);
+                // Commit change
+                txnManager.commit(txn);
 
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("Collection created sucessfully");
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Collection created sucessfully");
+                }
             }
         } catch (EXistException | PermissionDeniedException e) {
             LOG.error(e);
@@ -283,13 +253,7 @@ public class ExistCollection extends ExistResource {
             throw new EXistException(e);
 
         } finally {
-
-            // TODO: check if can be done earlier
-            if (collection != null) {
-                collection.release(LockMode.WRITE_LOCK);
-            }
-
-            if (LOG.isDebugEnabled()) {
+            if(LOG.isDebugEnabled()) {
                 LOG.debug("Finished creation");
             }
         }
@@ -311,39 +275,25 @@ public class ExistCollection extends ExistResource {
             mime = MimeType.BINARY_TYPE;
         }
 
-        // References to the database
-        Collection collection = null;
-
-        // create temp file and store. Existdb needs to read twice from a stream.
-        VirtualTempFile vtf = new VirtualTempFile();
-        try (final BufferedInputStream bis = new BufferedInputStream(is);
-             final BufferedOutputStream bos = new BufferedOutputStream(vtf)) {
-
-            // Perform actual copy
-            IOUtils.copy(bis, bos);
-        }
-        vtf.close();
-
-        // To support LockNullResource, a 0-byte XML document can received. Since 0-byte
+        // To support LockNullResource, a 0-byte XML document can be received. Since 0-byte
         // XML documents are not supported a small file will be created.
-        if (mime.isXMLType() && vtf.length() == 0L) {
 
-            if (LOG.isDebugEnabled())
+        if(mime.isXMLType() && length == 0) {
+            if (LOG.isDebugEnabled()) {
                 LOG.debug(String.format("Creating dummy XML file for null resource lock '%s'", newNameUri));
+            }
 
-            vtf = new VirtualTempFile();
-            IOUtils.write("<null_resource/>", vtf);
-            vtf.close();
+            is = new FastByteArrayInputStream("<null_resource/>".getBytes(UTF_8));
         }
 
         final TransactionManager txnManager = brokerPool.getTransactionManager();
 
         try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject));
-             final Txn txn = txnManager.beginTransaction()) {
+            final Txn txn = txnManager.beginTransaction();
+            final Collection collection = broker.openCollection(xmldbUri, LockMode.WRITE_LOCK)) {
 
             // Check if collection exists. not likely to happen since availability is checked
             // by ResourceFactory
-            collection = broker.openCollection(xmldbUri, LockMode.WRITE_LOCK);
             if (collection == null) {
                 LOG.debug(String.format("Collection %s does not exist", xmldbUri));
                 txnManager.abort(txn);
@@ -351,28 +301,26 @@ public class ExistCollection extends ExistResource {
             }
 
 
-            if (mime.isXMLType()) {
+            try(final FilterInputStreamCache cache = FilterInputStreamCacheFactory.getCacheInstance(() -> (String) brokerPool.getConfiguration().getProperty(Configuration.BINARY_CACHE_CLASS_PROPERTY), is);
+                    final InputStream cfis = new CachingFilterInputStream(cache)) {
+                if (mime.isXMLType()) {
+                    if (LOG.isDebugEnabled())
+                        LOG.debug(String.format("Inserting XML document '%s'", mime.getName()));
 
-                if (LOG.isDebugEnabled())
-                    LOG.debug(String.format("Inserting XML document '%s'", mime.getName()));
-
-                // Stream into database
-                try (final VirtualTempFileInputSource vtfis = new VirtualTempFileInputSource(vtf)) {
-                    IndexInfo info = collection.validateXMLResource(txn, broker, newNameUri, vtfis);
-                    DocumentImpl doc = info.getDocument();
+                    // Stream into database
+                    cfis.mark(Integer.MAX_VALUE);
+                    final IndexInfo info = collection.validateXMLResource(txn, broker, newNameUri, new InputSource(cfis));
+                    final DocumentImpl doc = info.getDocument();
                     doc.getMetadata().setMimeType(mime.getName());
-                    collection.store(txn, broker, info, vtfis);
-                }
+                    cfis.reset();
+                    collection.store(txn, broker, info, new InputSource(cfis));
+                } else {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug(String.format("Inserting BINARY document '%s'", mime.getName()));
+                    }
 
-            } else {
-
-                if (LOG.isDebugEnabled())
-                    LOG.debug(String.format("Inserting BINARY document '%s'", mime.getName()));
-
-                // Stream into database
-                try (final InputStream fis = vtf.getByteStream();
-                     final InputStream bis = new BufferedInputStream(fis)) {
-                    collection.addBinaryResource(txn, broker, newNameUri, bis, mime.getName(), length);
+                    // Stream into database
+                    collection.addBinaryResource(txn, broker, newNameUri, cfis, mime.getName(), length);
                 }
             }
 
@@ -397,16 +345,6 @@ public class ExistCollection extends ExistResource {
             throw e;
 
         } finally {
-
-            if (vtf != null) {
-                vtf.delete();
-            }
-
-            // TODO: check if can be done earlier
-            if (collection != null) {
-                collection.release(LockMode.WRITE_LOCK);
-            }
-
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Finished creation");
             }
@@ -432,48 +370,46 @@ public class ExistCollection extends ExistResource {
             throw new EXistException(ex.getMessage());
         }
 
-        Collection srcCollection = null;
         // This class contains already the URI of the resource that shall be moved/copied
-        final XmldbURI srcCollectionUri = xmldbUri;
+	    XmldbURI srcCollectionUri = xmldbUri;
         // use WRITE_LOCK if moving or if src and dest collection are the same
         final LockMode srcCollectionLockMode = mode == Mode.MOVE
                 || destCollectionUri.equals(srcCollectionUri) ? LockMode.WRITE_LOCK : LockMode.READ_LOCK;
-        Collection destCollection = null;
 
         final TransactionManager txnManager = brokerPool.getTransactionManager();
 
         try (final DBBroker broker = brokerPool.get(Optional.ofNullable(subject));
-             final Txn txn = txnManager.beginTransaction()) {
+                final Txn txn = txnManager.beginTransaction();
+                final Collection srcCollection = broker.openCollection(srcCollectionUri, srcCollectionLockMode)) {
 
             // Open collection if possible, else abort
-            srcCollection = broker.openCollection(srcCollectionUri, srcCollectionLockMode);
             if (srcCollection == null) {
                 txnManager.abort(txn);
                 return; // TODO throw
             }
 
-
             // Open collection if possible, else abort
-            destCollection = broker.openCollection(destCollectionUri, LockMode.WRITE_LOCK);
-            if (destCollection == null) {
-                LOG.debug(String.format("Destination collection %s does not exist.", xmldbUri));
-                txnManager.abort(txn);
-                return; // TODO throw?
-            }
+            try(final Collection destCollection = broker.openCollection(destCollectionUri, LockMode.WRITE_LOCK)) {
+                if (destCollection == null) {
+                    LOG.debug(String.format("Destination collection %s does not exist.", xmldbUri));
+                    txnManager.abort(txn);
+                    return; // TODO throw?
+                }
 
-            // Perform actial move/copy
-            if (mode == Mode.COPY) {
-                broker.copyCollection(txn, srcCollection, destCollection, newNameUri);
+                // Perform actial move/copy
+                if (mode == Mode.COPY) {
+                    broker.copyCollection(txn, srcCollection, destCollection, newNameUri);
 
-            } else {
-                broker.moveCollection(txn, srcCollection, destCollection, newNameUri);
-            }
+                } else {
+                    broker.moveCollection(txn, srcCollection, destCollection, newNameUri);
+                }
 
-            // Commit change
-            txnManager.commit(txn);
+                // Commit change
+                txnManager.commit(txn);
 
-            if (LOG.isDebugEnabled()) {
-                LOG.debug(String.format("Collection %sd successfully", mode));
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug(String.format("Collection %sd successfully", mode));
+                }
             }
 
         } catch (LockException e) {
@@ -486,15 +422,6 @@ public class ExistCollection extends ExistResource {
             LOG.error(e);
             throw new EXistException(e.getMessage());
         } finally {
-
-            if (destCollection != null) {
-                destCollection.release(LockMode.WRITE_LOCK);
-            }
-
-            if (srcCollection != null) {
-                srcCollection.release(srcCollectionLockMode);
-            }
-
             if (LOG.isDebugEnabled()) {
                 LOG.debug(String.format("Finished %s", mode));
             }

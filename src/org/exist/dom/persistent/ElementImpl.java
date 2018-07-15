@@ -40,6 +40,8 @@ import org.exist.storage.txn.Txn;
 import org.exist.util.ByteArrayPool;
 import org.exist.util.ByteConversion;
 import org.exist.util.UTF8;
+import org.exist.util.io.FastByteArrayInputStream;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.util.pool.NodePool;
 import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.Constants;
@@ -56,8 +58,6 @@ import org.w3c.dom.ProcessingInstruction;
 import org.w3c.dom.Text;
 import org.w3c.dom.TypeInfo;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.InputStream;
@@ -88,8 +88,8 @@ public class ElementImpl extends NamedNode implements Element {
     public static final int LENGTH_NS_ID = 2; //sizeof short
     public static final int LENGTH_PREFIX_LENGTH = 2; //sizeof short
 
-    private short attributes = 0;
-    private int children = 0;
+    private short attributes = 0; // number of attributes
+    private int children = 0; // number of elements AND attributes
 
     private int position = 0;
     private Map<String, String> namespaceMappings = null;
@@ -218,22 +218,25 @@ public class ElementImpl extends NamedNode implements Element {
             throw new RuntimeException("nodeId = null for element: " +
                 getQName().getStringValue());
         }
+
         try {
             final SymbolTable symbols = ownerDocument.getBrokerPool().getSymbols();
-            byte[] prefixData = null;
+            final byte[] prefixData;
             // serialize namespace prefixes declared in this element
             if(declaresNamespacePrefixes()) {
-                final ByteArrayOutputStream bout = new ByteArrayOutputStream();
-                final DataOutputStream out = new DataOutputStream(bout);
-                out.writeShort(namespaceMappings.size());
-                for(final Iterator<Map.Entry<String, String>> i =
-                        namespaceMappings.entrySet().iterator(); i.hasNext(); ) {
-                    final Map.Entry<String, String> entry = i.next();
-                    out.writeUTF(entry.getKey());
-                    final short nsId = symbols.getNSSymbol(entry.getValue());
-                    out.writeShort(nsId);
+                try(final FastByteArrayOutputStream bout = new FastByteArrayOutputStream(64);
+                    final DataOutputStream out = new DataOutputStream(bout)) {
+                    out.writeShort(namespaceMappings.size());
+                    for (final Map.Entry<String, String> namespaceMapping : namespaceMappings.entrySet()) {
+                        //TODO(AR) could store the prefix from the symbol table
+                        out.writeUTF(namespaceMapping.getKey());
+                        final short nsId = symbols.getNSSymbol(namespaceMapping.getValue());
+                        out.writeShort(nsId);
+                    }
+                    prefixData = bout.toByteArray();
                 }
-                prefixData = bout.toByteArray();
+            } else {
+                prefixData = null;
             }
 
             final short id = symbols.getSymbol(this);
@@ -247,6 +250,7 @@ public class ElementImpl extends NamedNode implements Element {
             int prefixLen = 0;
             if(hasNamespace) {
                 if(nodeName.getPrefix() != null && nodeName.getPrefix().length() > 0) {
+                    //TODO(AR) could store the prefix from the symbol table
                     prefixLen = UTF8.encoded(nodeName.getPrefix());
                 }
                 signature |= 0x10;
@@ -349,7 +353,7 @@ public class ElementImpl extends NamedNode implements Element {
         if(end > pos) {
             final byte[] pfxData = new byte[end - pos];
             System.arraycopy(data, pos, pfxData, 0, end - pos);
-            final InputStream bin = new ByteArrayInputStream(pfxData);
+            final InputStream bin = new FastByteArrayInputStream(pfxData);
             final DataInputStream in = new DataInputStream(bin);
             try {
                 final short prefixCount = in.readShort();
@@ -420,7 +424,7 @@ public class ElementImpl extends NamedNode implements Element {
         if(end > offset) {
             final byte[] pfxData = new byte[end - offset];
             System.arraycopy(data, offset, pfxData, 0, end - offset);
-            final InputStream bin = new ByteArrayInputStream(pfxData);
+            final InputStream bin = new FastByteArrayInputStream(pfxData);
             final DataInputStream in = new DataInputStream(bin);
             try {
                 final short prefixCount = in.readShort();
@@ -579,7 +583,7 @@ public class ElementImpl extends NamedNode implements Element {
                         final IStoredNode<?> last = (IStoredNode<?>) cl.item(child - 2);
                         insertAfter(transaction, nodes, last);
                     } else {
-                        final IStoredNode<?> last = (IStoredNode<?>) getLastChild();
+                        final IStoredNode<?> last = (IStoredNode<?>) getLastChild(true);
                         appendChildren(transaction, last.getNodeId().nextSibling(), null,
                             new NodeImplRef(getLastNode(last)), path, nodes, listener);
                     }
@@ -813,7 +817,7 @@ public class ElementImpl extends NamedNode implements Element {
             try(final DBBroker broker = ownerDocument.getBrokerPool().getBroker();
                 final INodeIterator iterator = broker.getNodeIterator(this)) {
 
-                iterator.next();
+                iterator.next();    // skip self
                 final int childCount = getChildCount();
                 for(int i = 0; i < childCount; i++) {
                     final IStoredNode next = iterator.next();
@@ -1026,16 +1030,41 @@ public class ElementImpl extends NamedNode implements Element {
 
     @Override
     public Node getLastChild() {
-        if(!hasChildNodes()) {
+        return getLastChild(false);
+    }
+
+    /**
+     * Get the last child.
+     *
+     * @param attributesAreChildren In the DLN model attributes have child node ids,
+     *     however in the DOM model attributes are not child nodes. Set true for DLN
+     *     or false for DOM.
+     *
+     * @return the last child.
+     */
+    private Node getLastChild(final boolean attributesAreChildren) {
+        if ((!attributesAreChildren) && (!hasChildNodes())) {
+            // DOM model
+            return null;
+        } else if (!(hasChildNodes() || hasAttributes())) {
+            // DLN model
             return null;
         }
+
         Node node = null;
-        if(!isDirty) {
+        if (!isDirty) {
             final NodeId child = nodeId.getChild(children);
             node = ownerDocument.getNode(new NodeProxy(ownerDocument, child));
         }
-        if(node == null) {
-            final NodeList cl = getChildNodes();
+        if (node == null) {
+            final NodeList cl;
+            if (!attributesAreChildren) {
+                // DOM model
+                cl = getChildNodes();
+            } else {
+                // DLN model
+                cl = getAttrsAndChildNodes();
+            }
             return cl.item(cl.getLength() - 1);
         }
         return node;
@@ -1325,67 +1354,71 @@ public class ElementImpl extends NamedNode implements Element {
         //}
         if(declaresNamespacePrefixes()) {
             // declare namespaces used by this element
-            Map.Entry<String, String> entry;
-            String namespace, prefix;
-            for(final Iterator<Map.Entry<String, String>>
-                    i = namespaceMappings.entrySet().iterator(); i.hasNext(); ) {
-                entry = i.next();
-                prefix = entry.getKey();
-                namespace = entry.getValue();
-                buf.append(" ").append(XMLConstants.XMLNS_ATTRIBUTE);
-                if(prefix.length() == 0) {
-                    buf.append("\"");
-                    //.append(namespace);
-                } else {
-                    buf.append(":")
-                    .append(prefix)
-                    .append("=\"");
-                    //.append(namespace);
+            for(final Map.Entry<String, String> namespaceMapping : namespaceMappings.entrySet()) {
+                final String prefix = namespaceMapping.getKey();
+                final String namespace = namespaceMapping.getValue();
+                buf.append(' ').append(XMLConstants.XMLNS_ATTRIBUTE);
+                if(!prefix.isEmpty()){
+                    buf
+                            .append(':')
+                            .append(prefix);
                 }
-                buf.append("...\" ");
+                buf
+                        .append("=\"")
+                        .append(namespace)
+                        .append('"');
+
                 namespaces.add(namespace);
             }
         }
         if(nodeName.getNamespaceURI().length() > 0
             && (!namespaces.contains(nodeName.getNamespaceURI()))) {
-            buf.append(" ")
+            buf.append(' ')
                 .append(XMLConstants.XMLNS_ATTRIBUTE)
-                .append(":")
+                .append(':')
                 .append(nodeName.getPrefix()).append("=\"")
                 .append(nodeName.getNamespaceURI())
-                .append("\" ");
+                .append('"');
         }
 
-        final NamedNodeMap attrs = getAttributes();
-        for(int i = 0; i < attrs.getLength(); i++) {
-            final Attr attr = (Attr)attrs.item(i);
-            buf.append(' ')
-                    .append(attr.getName())
-                    .append("=\"")
-                    .append(escapeXml(attr))
-                    .append("\"");
-        }
+        if(getInternalAddress() == UNKNOWN_NODE_IMPL_ADDRESS) {
+            // not yet stored in the database, so we cannot retrieve attribute and child nodes
+            buf.append(" ...");
 
-        final StringBuilder children = new StringBuilder();
-        final NodeList childNodes = getChildNodes();
-        for(int i = 0; i < childNodes.getLength(); i++) {
-            final Node child = childNodes.item(i);
-            switch(child.getNodeType()) {
-                case Node.ELEMENT_NODE:
-                    children.append(((ElementImpl) child).toString(false, namespaces));
-                    break;
-
-                default:
-                    children.append(child.toString());
-            }
-        }
-
-        if(childNodes.getLength() > 0) {
-            buf.append(">");
-            buf.append(children.toString());
-            buf.append("</").append(nodeName).append(">");
         } else {
-            buf.append("/>");
+            // retrieve attributes and child nodes from storage
+
+            final NamedNodeMap attrs = getAttributes();
+            for(int i = 0; i < attrs.getLength(); i++) {
+                final Attr attr = (Attr)attrs.item(i);
+                buf.append(' ')
+                        .append(attr.getName())
+                        .append("=\"")
+                        .append(escapeXml(attr))
+                        .append("\"");
+            }
+
+            final StringBuilder children = new StringBuilder();
+            final NodeList childNodes = getChildNodes();
+            for (int i = 0; i < childNodes.getLength(); i++) {
+                final Node child = childNodes.item(i);
+                switch (child.getNodeType()) {
+                    case Node.ELEMENT_NODE:
+                        children.append(((ElementImpl) child).toString(false, namespaces));
+                        break;
+
+                    default:
+                        children.append(child.toString());
+                }
+            }
+
+            if (childNodes.getLength() > 0) {
+                buf.append(">");
+                buf.append(children.toString());
+                buf.append("</").append(nodeName).append(">");
+            } else {
+                buf.append("/>");
+            }
         }
 
         return buf.toString();

@@ -4,25 +4,25 @@
 
 ## Overview
 
-This document describes a new Versioning Scheme and Release Process for eXist. These two topics are tightly connected, so both are covered in this document. 
+This document describes the Versioning Scheme and Release Process for eXist. These two topics are tightly connected, so both are covered in this document. 
 
-* The Versioning Scheme describes how eXist's source code and releases are to be named. The goal is that every new version number unambiguously inform users and developers about its significance and order relative to past and future versions.
+* The Versioning Scheme describes how eXist's source code and releases are named. Version numbers unambiguously inform users and developers about the significance of the release and order relative to past and future versions.
 
-* The Release Process describes how the release manager should take a snapshot of eXist source code, apply the Versioning Scheme, assemble it, and publish the resulting products. The goal is to have a clear procedure for altering the version number to mark transitions in phases of development leading up to each release, and to ensure that releases are consistently sourced from a specific point in the project repository's history.
+* The Release Process describes how the Release Manager (the person who orchestrates a release) should take a snapshot of eXist source code, apply the Versioning Scheme, assemble it, and publish the resulting products. The goal is to have a clear procedure for altering the version number to mark transitions in phases of development leading up to each release, and to ensure that releases are consistently sourced from a specific point in the project repository's history.
 
-The final section of the document explains the motivation for the recommendation here, for those who would like additional context. Assuming the proposal is adopted, this section could be removed from the final version of this document. 
+The final section of the document describes the old versioning practice, compared to the new one. 
 
-### TL;DR - The Motivation in Brief
+### Motivation
 
-This proposal is part of a larger effort to facilitate more rapid releases, with the goal of getting new features and bug fixes out to the community without sacrificing quality or stability. Critical to the success of this effort is achieving a common understanding about version numbers and managing version changes during releases. 
+This proposal is intended to facilitate more rapid releases, with the goal of getting new features and bug fixes out to the community without sacrificing quality or stability. Critical to the success of this effort is achieving a common understanding about version numbers and managing version changes during releases. 
 
-The immediate problems with versioning crept in during the long development phase of eXist 3.0, when eXist's version-related properties (as recorded in the `$EXIST_HOME/build.properties` file) diverged, and as a result, the community struggled with having two ways of talking about eXist's version, e.g., the public label, `3.0.RC2`, and the numeric version, `3.0.3`. 
+Problems with versioning crept in during the long development phase of eXist 3.0, when eXist's version-related properties (as recorded in the `$EXIST_HOME/build.properties` file) diverged, and as a result, the community struggled with having two ways of talking about eXist's version, e.g., the public label, `3.0.RC2`, and the numeric version, `3.0.3`. 
 
-If this proposal is adopted, the next version of eXist, version 3.1.0, will inaugurate the use of a single version number for all versions of eXist. 
+This proposal was first implemented with eXist 3.1.0, which inaugurated the use of a single version number for all versions of eXist. The document has been refined and expanded since then.
 
 The new versioning scheme uses the popular Semantic Versioning scheme, in which each number here reflects major, minor, and patch versions. This single version-related property will bring clarity and semantic precision to eXist's releases. The Semantic Versioning scheme allows the eXist team to label development versions as snapshots or release candidates, and to release these and nightly builds with clear version numbers. 
 
-Paired with a revised set of release procedures, the new versioning scheme will ensure the names of new versions of eXist delivered to the community will be precise and reliable. Removing versioning ambiguities and clarifying release practices will be a key step in moving eXist to a more rapid cycle of development and release.
+Paired with a revised set of release procedures, the new versioning scheme ensures the names of new versions of eXist delivered to the community are precise and reliable. Removing versioning ambiguities and clarifying release practices facilitates a rapid cycle of development and release.
 
 ## Versioning Scheme
 
@@ -122,7 +122,11 @@ Once development on a new stable version is complete, the following steps will p
     project.version = 3.1.0
     ```
     
-    And commit the changes and push to `origin` (or `upstream` if you are on a fork).
+    And commit the changes and push to `origin` (or `upstream` if you are on a fork):
+    ```
+    $ git commit build.properties -m "[release] Set version for 3.1.0 release"
+    $ git push origin/develop
+    ```
 
 4. Git tag **and sign** eXist-3.1.0 from the `HEAD` of `develop` branch and push the tag to `origin` (or `upstream` if you are on a fork):
     ```
@@ -139,7 +143,11 @@ Once development on a new stable version is complete, the following steps will p
     project.version = 3.2.0-SNAPSHOT
     ```
 
-    And commit the changes and push to `origin` (or `upstream` if you are on a fork).
+    And commit the changes and push to `origin` (or `upstream` if you are on a fork):
+    ```
+    $ git commit build.properties -m "[release] Set version to 3.2.0-SNAPSHOT"
+    $ git push origin/develop
+    ```
 
     **NOTE:** We increment to the next `MINOR` version, rather than to the next `PATCH` or `MAJOR` version, for two reasons. First, we assume the next version will likely contain features and not just bug patches, although this does not prevent us from doing a `3.1.1` (a `PATCH` release) release next, should we have only patches. By the same token, the future is uncertain and we recognise that it is easier to release features with non-breaking API changes and patches, although this still does not prevent us from doing a `4.0.0` release next, should we have breaking API changes.
 
@@ -176,7 +184,15 @@ Once development on a new stable version is complete, the following steps will p
 
 2. Update and publish the latest Maven artifacts as described here: https://github.com/exist-db/mvn-repo
 
-3. Edit the links for the downloads on the eXist website, by logging into eXide on http://www.exist-db.org/exist/apps/eXide/ and opening the file `/db/apps/homepage/index.html`, you need to modify the HTML under `<a name="downloads"/>` and then save the page:
+3. Ask [Evolved Binary](http://www.evolvedbinary.com) to build and upload new Docker Images for the latest release.
+
+4. Update the Mac HomeBrew for eXist-db, see: [Releasing to Homebrew](https://github.com/eXist-db/exist/blob/develop/exist-versioning-release.md#releasing-to-homebrew).
+
+5. Edit the links for the downloads on the eXist website.
+
+    1. `$ git clone https://github.com/exist-db/website.git`
+    
+    2. Edit the file `website/index.html`, you need to modify the HTML under `<a name="downloads"/>` and update the version numbers for the current release:
 
    ```html
    <a name="downloads"/>
@@ -192,6 +208,15 @@ Once development on a new stable version is complete, the following steps will p
                  <span class="exist-version">Version 3.1.0</span>
              </button>
          </a>
+         <a href="https://hub.docker.com/r/evolvedbinary/exist-db/tags/">
+             <button class="btn btn-default download-btn docker-images" type="button">
+                 <span class="status">Docker Images</span>
+                 <span class="icon">
+                     <i class="fa fa-ship"/>
+                 </span>
+                 <span class="exist-version">Version 3.1.0</span>
+             </button>
+         </a>
          <a href="https://github.com/exist-db/mvn-repo">
              <button class="btn btn-default download-btn maven" type="button">
                  <span class="status">Maven Artifacts</span>
@@ -202,20 +227,30 @@ Once development on a new stable version is complete, the following steps will p
              </button>
          </a>
    ```
+   
+    3. Edit the file `expath-pkg.xml` and bump the version i.e. `version="4"` to reflect the new version.
+    
+    4. Commit your change and push: `$ git commit index.html expath-pkg.xml -m "Update for eXist-3.1.0 website" && git push origin master`
+    
+    5. Tag your release of the Website and push the tag: `$ git tag -s -m "Release tag for eXist 3.1.0 website" eXist-3.1.0 && git push origin eXist-3.1.0`.
+    
+    6. Create a XAR for the website: `$ git checkout eXist-3.1.0 && ant`.
+    
+    7. Visit http://www.exist-db.org/exist/apps/dashboard/index.html, login and upload the new `build/homepage.xar` file via the Package Manager.
 
-    As a temporary measure, you also need to make the same modifications to the file in GitHub - https://github.com/eXist-db/website/blob/master/index.html and send a PR for that. 
+6. Login to the blog at http://exist-db.org/exist/apps/wiki/blogs/eXist/ and add a new news item which announces the release and holds the release notes. It should be named like http://exist-db.org/exist/apps/wiki/blogs/eXist/eXistdb310
 
-4. Login to the blog at http://exist-db.org/exist/apps/wiki/blogs/eXist/ and add a new news item which announces the release and holds the release notes. It should be named like http://exist-db.org/exist/apps/wiki/blogs/eXist/eXistdb310
+7. Visit the GitHub releases page https://github.com/eXist-db/exist/releases and create a new release, enter the tag you previously created and link the release notes from the blog and the binaries from BinTray.
 
-5. Visit the GitHub releases page https://github.com/eXist-db/exist/releases and create a new release, enter the tag you previously created and link the release notes from the blog and the binaries from BinTray.
+8. Send an email to the `exist-open` mailing list announcing the release with a title similar to `[ANN] Release of eXist 3.1.0`, copy and paste the release notes from the blog into the email and reformat appropriately (see past emails).
 
-6. Send an email to the `exist-open` mailing list announcing the release with a title similar to `[ANN] Release of eXist 3.1.0`, copy and paste the release notes from the blog into the email and reformat appropriately (see past emails).
+9. Tweet about it using the `existdb` twitter account.
 
-7. Tweet about it using the `existdb` twitter account.
+10. Submit a news item to XML.com - https://www.xml.com/news/submit-news-item/.
 
-8. Submit a news item to XML.com - https://www.xml.com/news/submit-news-item/.
+11. Update the Wikipedia page with the new version details - https://en.wikipedia.org/wiki/EXist.
 
-9. Go to GitHub and move all issues and PRs which are still open for the release milestone to the next release milestone. Close the release milestone.
+12. Go to GitHub and move all issues and PRs which are still open for the release milestone to the next release milestone. Close the release milestone.
 
 
 ### Preparing a Patch Release
@@ -290,9 +325,34 @@ Assuming that work on eXist 3.2.0 is complete and the changes from the previous 
     $ ./build.sh installer installer-exe app dist-war
     ```
 
-## Motivation
+### Releasing to Homebrew
 
-The goal of this proposal is to ensure the theory and practice for each new version of eXist is solid is well understood by core developers and the eXist community. Versioning practices adopted during the development of eXist 3.0 and some well-intentioned mistakes in its public release led the authors to propose a new scheme which could avoid these problems and establish a firmer foundation in versioning and release practices.
+[Homebrew](http://brew.sh) is a popular command-line package manager for macOS. Once Homebrew is installed, applications like eXist can be installed via a simple command. eXist's presence on Homebrew is found in the Caskroom project, as a "cask", at [https://github.com/caskroom/homebrew-cask/blob/master/Casks/exist-db.rb](https://github.com/caskroom/homebrew-cask/blob/master/Casks/exist-db.rb).
+
+> **Terminology:** "Caskroom" is the Homebrew extension project where pre-built binaries and GUI applications go, whereas the original "Homebrew" project is reserved for command-line utilities that can be built from source. Because the macOS version of eXist is released as an app bundle with GUI components, it is distributed via Caskroom.
+
+When there is a new release of eXist, a member of the community can submit a pull request with the necessary changes to the eXist cask. [Follow the directions on the Homebrew-cask Github](https://github.com/caskroom/homebrew-cask/blob/master/CONTRIBUTING.md#updating-a-cask) - summarized here adapted to OpenRefine:
+
+```
+# install and setup script - only needed once
+brew install vitorgalvao/tiny-scripts/cask-repair
+cask-repair --help
+
+# use to update eXist
+cask-repair exist-db
+```
+
+The cask-repair tool will prompt you to enter the new version number. It will then use this version number to construct a download URL using the formula (where `{version}` represents the version number):
+
+```
+https://bintray.com/artifact/download/existdb/releases/eXist-db-#{version}.dmg
+```
+
+**Note:** It is important that both version number components (the tag and version number) match, so that the formula can find the installer's URL.
+
+Once cask-repair has successfully downloaded the new installer, it will calculate the new SHA-256 fingerprint value and construct a pull request, like this one: [https://github.com/caskroom/homebrew-cask/pull/42509](https://github.com/caskroom/homebrew-cask/pull/42509). Once the pull request is submitted, continuous integration tests will run, and a member of the caskroom community will review the PR. At times there is a backlog on the CI servers, but once tests pass, the community review is typically completed in a matter of hours.
+
+## Comparison to the Old Versioning and Release Procedures
 
 ### The Old Way
 
@@ -316,7 +376,7 @@ Our goal is to prevent such a divergence in versioning from creeping back into e
 
 ### The New Way
 
-Once this proposal is adopted, eXist will have a single version number, forumlated according to the precise principles of Semantic Versioning, captured in a single property:
+eXist now has a single version number, forumlated according to the precise principles of Semantic Versioning, captured in a single property:
 
 ```
 project.version = 3.0.0

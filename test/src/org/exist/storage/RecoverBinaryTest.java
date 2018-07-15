@@ -21,7 +21,6 @@
  */
 package org.exist.storage;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -33,6 +32,7 @@ import org.exist.EXistException;
 import org.exist.collections.Collection;
 import org.exist.collections.triggers.TriggerException;
 import org.exist.dom.persistent.BinaryDocument;
+import org.exist.dom.persistent.LockedDocument;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.lock.Lock.LockMode;
 import org.exist.storage.txn.TransactionManager;
@@ -78,12 +78,11 @@ public class RecoverBinaryTest {
 	            final String existHome = System.getProperty("exist.home");
                 Path existDir = existHome == null ? Paths.get(".") : Paths.get(existHome);
                 existDir = existDir.normalize();
-        	    try(final ByteArrayOutputStream os = new ByteArrayOutputStream()) {
-                    Files.copy(existDir.resolve("LICENSE"), os);
-                	BinaryDocument doc =
-                    	root.addBinaryResource(transaction, broker, TestConstants.TEST_BINARY_URI, os.toByteArray(), "text/text");
-	                assertNotNull(doc);
-    	        }
+
+                final byte[] bin = Files.readAllBytes(existDir.resolve("LICENSE"));
+                BinaryDocument doc =
+                    root.addBinaryResource(transaction, broker, TestConstants.TEST_BINARY_URI, bin, "text/text");
+                assertNotNull(doc);
 
 				transact.commit(transaction);
 			}
@@ -102,9 +101,11 @@ public class RecoverBinaryTest {
         BrokerPool.FORCE_CORRUPTION = false;
 
         final BrokerPool pool = existEmbeddedServer.getBrokerPool();
-        try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()));) {
-            final BinaryDocument binDoc = (BinaryDocument) broker.getXMLResource(TestConstants.TEST_COLLECTION_URI.append(TestConstants.TEST_BINARY_URI), LockMode.READ_LOCK);
-            assertNotNull("Binary document is null", binDoc);
+        try(final DBBroker broker = pool.get(Optional.of(pool.getSecurityManager().getSystemSubject()));
+                final LockedDocument lockedDoc = broker.getXMLResource(TestConstants.TEST_COLLECTION_URI.append(TestConstants.TEST_BINARY_URI), LockMode.READ_LOCK)) {
+            assertNotNull("Binary document is null", lockedDoc);
+
+            final BinaryDocument binDoc = (BinaryDocument)lockedDoc.getDocument();
 
             try(final InputStream is = broker.getBinaryResource(binDoc)) {
                 final byte[] bdata = new byte[(int) broker.getBinaryResourceSize(binDoc)];

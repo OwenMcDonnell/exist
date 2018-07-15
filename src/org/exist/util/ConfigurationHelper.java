@@ -1,5 +1,7 @@
 package org.exist.util;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -94,9 +96,20 @@ public class ConfigurationHelper {
         // try classpath
         final URL configUrl = ConfigurationHelper.class.getClassLoader().getResource(config);
         if (configUrl != null) {
-            final Path existHome = Paths.get(configUrl.getPath()).getParent();
-            LOG.debug("Got eXist home from classpath: {}", existHome.toAbsolutePath().toString());
-            return Optional.of(existHome);
+            try {
+                final Path existHome;
+                if ("jar".equals(configUrl.getProtocol())) {
+                    existHome = Paths.get(new URI(configUrl.getPath())).getParent().getParent();
+                    LOG.warn(config + " file was found on the classpath, but inside a Jar file! Derived EXIST_HOME from Jar's parent folder: {}", existHome);
+                } else {
+                    existHome = Paths.get(configUrl.toURI()).getParent();
+                    LOG.debug("Got EXIST_HOME from classpath: {}", existHome.toAbsolutePath().toString());
+                }
+                return Optional.of(existHome);
+            } catch (final URISyntaxException e) {
+                // Catch all potential problems
+                LOG.error("Could not derive EXIST_HOME from classpath: {}", e.getMessage(), e);
+            }
         }
         
         return Optional.empty();

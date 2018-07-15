@@ -20,12 +20,12 @@
 
 package xquery.inspect;
 
-import xquery.TestRunner;
+import org.exist.test.runner.XSuite;
+import org.junit.runner.RunWith;
 
-public class InspectTests extends TestRunner {
-
-    @Override
-    protected String getDirectory() {
-        return "test/src/xquery/inspect";
-    }
+@RunWith(XSuite.class)
+@XSuite.XSuiteFiles({
+    "test/src/xquery/inspect"
+})
+public class InspectTests {
 }

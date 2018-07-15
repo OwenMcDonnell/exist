@@ -250,19 +250,10 @@ public class SAXSerializer extends AbstractSerializer implements ContentHandler,
                         }
                     } else if (attrQName.getPrefix() != null && attrQName.getPrefix().length() > 0) {
                         prefix = attrQName.getPrefix();
-                        if((XMLConstants.XMLNS_ATTRIBUTE + ":").equals(prefix)) {
-                            if (nsSupport.getURI(prefix) == null) {
-                                uri = attribs.getValue(i);
-                                prefix = attrQName.getLocalPart();
-                                namespaceDecls.put(prefix, uri);
-                                nsSupport.declarePrefix(prefix, uri);
-                            }
-                        } else {
-                            if (nsSupport.getURI(prefix) == null) {
-                                uri = attrQName.getNamespaceURI();
-                                namespaceDecls.put(prefix, uri);
-                                nsSupport.declarePrefix(prefix, uri);
-                            }
+                        if (nsSupport.getURI(prefix) == null) {
+                            uri = attrQName.getNamespaceURI();
+                            namespaceDecls.put(prefix, uri);
+                            nsSupport.declarePrefix(prefix, uri);
                         }
                     }
                 }
@@ -407,12 +398,20 @@ public class SAXSerializer extends AbstractSerializer implements ContentHandler,
 
     @Override
     public void startDTD(final String name, final String publicId, final String systemId) throws SAXException {
-        //Nothing to do
+        try {
+            receiver.startDocumentType(name, publicId, systemId);
+        } catch (final TransformerException e) {
+            throw new SAXException(e.getMessage(), e);
+        }
     }
 
     @Override
     public void endDTD() throws SAXException {
-        //Nothing to do
+        try {
+            receiver.endDocumentType();
+        } catch (final TransformerException e) {
+            throw new SAXException(e.getMessage(), e);
+        }
     }
 
     @Override
@@ -441,12 +440,20 @@ public class SAXSerializer extends AbstractSerializer implements ContentHandler,
 
     @Override
     public void startCDATA() throws SAXException {
-        //Nothing to do
+        try {
+            receiver.startCdataSection();
+        } catch (final TransformerException e) {
+            throw new SAXException(e.getMessage(), e);
+        }
     }
 
     @Override
     public void endCDATA() throws SAXException {
-        //Nothing to do
+        try {
+            receiver.endCdataSection();
+        } catch (final TransformerException e) {
+            throw new SAXException(e.getMessage(), e);
+        }
     }
 
     @Override

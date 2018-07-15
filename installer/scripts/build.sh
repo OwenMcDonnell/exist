@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # $Id$
 
 if [ ! -d "$JAVA_HOME" ]; then
@@ -12,14 +12,12 @@ fi
 
 ANT_HOME="$EXIST_HOME/tools/ant"
 
-LOCALCLASSPATH=$CLASSPATH:$ANT_HOME/lib/ant-launcher-1.10.1.jar:$EXIST_HOME/lib/test/junit-4.12.jar
-
-JAVA_ENDORSED_DIRS="$EXIST_HOME"/lib/endorsed
+LOCALCLASSPATH=$CLASSPATH:$ANT_HOME/lib/ant-launcher-1.10.2.jar:$EXIST_HOME/lib/test/junit-4.12.jar
 
 # You must set
 # -Djavax.xml.transform.TransformerFactory=org.apache.xalan.processor.TransformerFactoryImpl
 # Otherwise Ant will fail to do junitreport with Saxon, as it has a direct dependency on Xalan.
-JAVA_OPTS="-Dant.home=$ANT_HOME -Djava.endorsed.dirs=$JAVA_ENDORSED_DIRS -Dexist.home=$EXIST_HOME -Djavax.xml.transform.TransformerFactory=org.apache.xalan.processor.TransformerFactoryImpl $JAVA_OPTS"
+JAVA_OPTS="-Dant.home=$ANT_HOME -Dexist.home=$EXIST_HOME -Djavax.xml.transform.TransformerFactory=org.apache.xalan.processor.TransformerFactoryImpl $JAVA_OPTS"
 
 echo Starting Ant...
 echo

@@ -189,7 +189,7 @@ public class Type {
         //TODO use parentheses after the nodes name  ?
         defineBuiltInType(NODE, "node()");
         defineBuiltInType(ITEM, "item()");
-        defineBuiltInType(EMPTY, "empty()");
+        defineBuiltInType(EMPTY, "empty-sequence()","empty()"); // keep empty() for backward compatibility
 
         defineBuiltInType(ELEMENT, "element()");
         defineBuiltInType(DOCUMENT, "document-node()");
@@ -201,10 +201,10 @@ public class Type {
         defineBuiltInType(CDATA_SECTION, "cdata-section()");
 
         defineBuiltInType(JAVA_OBJECT, "object");
-        defineBuiltInType(FUNCTION_REFERENCE, "function");
-        defineBuiltInType(MAP, "map");
-        defineBuiltInType(ARRAY, "array");
-        defineBuiltInType(NUMBER, "numeric");
+        defineBuiltInType(FUNCTION_REFERENCE, "function(*)", "function");
+        defineBuiltInType(MAP, "map(*)", "map"); // keep map for backward compatibility
+        defineBuiltInType(ARRAY, "array(*)","array");
+        defineBuiltInType(NUMBER, "xs:numeric", "numeric"); // keep numeric for backward compatibility
 
         defineBuiltInType(ANY_TYPE, "xs:anyType");
         defineBuiltInType(ANY_SIMPLE_TYPE, "xs:anySimpleType");
@@ -242,6 +242,8 @@ public class Type {
         defineBuiltInType(HEX_BINARY, "xs:hexBinary");
         defineBuiltInType(NOTATION, "xs:NOTATION");
 
+        //TODO add handling for xs:dateTimeStamp
+        //defineBuiltInType(DATE_TIME_STAMP, "xs:dateTimeStamp");
         defineBuiltInType(DATE_TIME, "xs:dateTime");
         defineBuiltInType(DATE, "xs:date");
         defineBuiltInType(TIME, "xs:time");

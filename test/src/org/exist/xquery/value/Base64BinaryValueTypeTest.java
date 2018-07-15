@@ -1,18 +1,20 @@
 package org.exist.xquery.value;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Optional;
 
 import org.apache.commons.codec.binary.Base64InputStream;
 import org.exist.util.ConfigurationHelper;
-import org.exist.util.FileUtils;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.xquery.XPathException;
 import org.junit.Test;
 import static org.junit.Assert.assertNotNull;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
  *
@@ -51,20 +53,15 @@ public class Base64BinaryValueTypeTest {
     }
 
     @Test
-    public void verify_validBase64_passes_large_string() throws XPathException, IOException {
+    public void verify_validBase64_passes_large_string() throws XPathException, IOException, URISyntaxException {
         Optional<Path> home = ConfigurationHelper.getExistHome();
-        Path binaryFile = FileUtils.resolve(home, "webapp").resolve("logo.jpg");
+        Path binaryFile = Paths.get(getClass().getResource("logo.jpg").toURI());
 
-        String base64data = null;
+        final String base64data;
         try(final InputStream is = new Base64InputStream(Files.newInputStream(binaryFile), true, -1, null);
-                final ByteArrayOutputStream baos  = new ByteArrayOutputStream()) {
-
-            byte buf[] = new byte[1024];
-            int read = -1;
-            while((read = is.read(buf)) > -1) {
-                baos.write(buf, 0, read);
-            }
-            base64data = new String(baos.toByteArray());
+                final FastByteArrayOutputStream baos  = new FastByteArrayOutputStream()) {
+            baos.write(is);
+            base64data = baos.toString(UTF_8);
         }
 
         assertNotNull(base64data);

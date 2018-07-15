@@ -22,6 +22,7 @@ public class EXistClassLoader extends URLClassLoader {
             try {
                 addURL(path.toUri().toURL());
             } catch (final MalformedURLException e) {
+                e.printStackTrace();
             }
         }
     }

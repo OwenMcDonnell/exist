@@ -19,12 +19,12 @@
  */
 package org.exist.xquery.modules.exi;
 
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
 import org.exist.dom.QName;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.util.serializer.EXISerializer;
 import org.exist.xquery.BasicFunction;
 import org.exist.xquery.Cardinality;
@@ -85,14 +85,14 @@ public class EncodeExiFunction extends BasicFunction {
 		if(args[0].isEmpty()) {
             return Sequence.EMPTY_SEQUENCE;
         }
-		try {
-			ByteArrayOutputStream baos = new ByteArrayOutputStream();
-			EXISerializer exiSerializer = null;
+		try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
+			EXISerializer exiSerializer;
 			if(args.length > 1) {
 				if(!args[1].isEmpty()) {
 					Item xsdItem = args[1].itemAt(0);
-					InputStream xsdInputStream = EXIUtils.getInputStream(xsdItem, context);
-					exiSerializer = new EXISerializer(baos, xsdInputStream);
+					try (InputStream xsdInputStream = EXIUtils.getInputStream(xsdItem, context)) {
+						exiSerializer = new EXISerializer(baos, xsdInputStream);
+					}
 				}
 				else {
 					exiSerializer = new EXISerializer(baos);
@@ -101,11 +101,12 @@ public class EncodeExiFunction extends BasicFunction {
 			else {
 				exiSerializer = new EXISerializer(baos);
 			}
+
 			Item inputNode = args[0].itemAt(0);
 			exiSerializer.startDocument();
 	        inputNode.toSAX(context.getBroker(), exiSerializer, new Properties());
 	        exiSerializer.endDocument();
-	        return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), baos.toInputStream());
+	        return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), baos.toFastByteInputStream());
 		}
 		catch(IOException ioex) {
 			// TODO - test!

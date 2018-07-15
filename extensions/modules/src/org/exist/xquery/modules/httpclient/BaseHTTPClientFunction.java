@@ -36,6 +36,7 @@ import org.exist.util.Configuration;
 import org.exist.util.MimeTable;
 import org.exist.util.MimeType;
 import org.exist.util.io.CachingFilterInputStream;
+import org.exist.util.io.FastByteArrayOutputStream;
 import org.exist.util.io.FilterInputStreamCache;
 import org.exist.util.io.FilterInputStreamCacheFactory;
 import org.exist.xquery.*;
@@ -47,7 +48,6 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
@@ -374,14 +374,10 @@ public abstract class BaseHTTPClientFunction extends BasicFunction {
                         builder.addAttribute(new QName("type", null, null), "text");
                         builder.addAttribute(new QName("encoding", null, null), "URLEncoded");
 
-                        final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                        final byte buf[] = new byte[4096];
-                        int read = -1;
-                        while ((read = cfis.read(buf)) > -1) {
-                            baos.write(buf, 0, read);
+                        try (final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
+                            baos.write(cfis);
+                            builder.characters(URLEncoder.encode(EncodingUtil.getString(baos.toByteArray(), ((HttpMethodBase) method).getResponseCharSet()), "UTF-8"));
                         }
-                        baos.close();
-                        builder.characters(URLEncoder.encode(EncodingUtil.getString(baos.toByteArray(), ((HttpMethodBase) method).getResponseCharSet()), "UTF-8"));
                     } else {
 
                         // Assume it's a binary body and Base64 encode it

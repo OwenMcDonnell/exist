@@ -45,8 +45,6 @@ import jline.Completor;
 import jline.ConsoleReader;
 import jline.History;
 import jline.Terminal;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.exist.SystemProperties;
 import org.exist.dom.persistent.XMLUtil;
 import org.exist.security.ACLPermission;
@@ -58,16 +56,15 @@ import org.exist.storage.ElementIndex;
 import org.exist.util.*;
 import org.exist.util.serializer.SAXSerializer;
 import org.exist.util.serializer.SerializerPool;
-import org.exist.xmldb.CollectionManagementServiceImpl;
+import org.exist.xmldb.EXistCollectionManagementService;
 import org.exist.xmldb.DatabaseInstanceManager;
 import org.exist.xmldb.EXistResource;
 import org.exist.xmldb.ExtendedResource;
 import org.exist.xmldb.IndexQueryService;
 import org.exist.xmldb.UserManagementService;
-import org.exist.xmldb.XPathQueryServiceImpl;
+import org.exist.xmldb.EXistXPathQueryService;
 import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.Constants;
-import org.exist.xquery.util.URIUtils;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -722,7 +719,7 @@ public class InteractiveClient {
                     errorln("could not parse collection name into a valid URI: " + e.getMessage());
                     return false;
                 }
-                final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) current
+                final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) current
                         .getService("CollectionManagementService", "1.0");
                 final Collection newCollection = mgtService.createCollection(collUri);
                 if (newCollection == null) {
@@ -754,7 +751,7 @@ public class InteractiveClient {
                     messageln("missing argument.");
                     return true;
                 }
-                final boolean r = parseZip(args[1]);
+                final boolean r = parseZip(Paths.get(args[1]));
                 getResources();
                 return r;
 
@@ -1096,7 +1093,7 @@ public class InteractiveClient {
                 return false;
                 //XXX:make it pluggable
             } else if (havePluggableCommands) {
-                final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) current.getService("CollectionManagementService", "1.0");
+                final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) current.getService("CollectionManagementService", "1.0");
                 try {
                     mgtService.runCommand(args);
                 } catch(final XMLDBException e) {
@@ -1191,7 +1188,7 @@ public class InteractiveClient {
             System.out.println("Sort-by = " + sortBy);
         }
 
-        final XPathQueryServiceImpl service = (XPathQueryServiceImpl) current.getService("XPathQueryService", "1.0");
+        final EXistXPathQueryService service = (EXistXPathQueryService) current.getService("XPathQueryService", "1.0");
         service.setProperty(OutputKeys.INDENT, properties.getProperty(INDENT));
         service.setProperty(OutputKeys.ENCODING, properties.getProperty(ENCODING));
 
@@ -1255,7 +1252,7 @@ public class InteractiveClient {
     }
 
     private void rmcol(final XmldbURI collection) throws XMLDBException {
-        final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) current.getService("CollectionManagementService", "1.0");
+        final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) current.getService("CollectionManagementService", "1.0");
         message("removing collection " + collection + " ...");
         mgtService.removeCollection(collection);
         messageln("done.");
@@ -1263,7 +1260,7 @@ public class InteractiveClient {
 
     private void copy(final XmldbURI source, XmldbURI destination) throws XMLDBException {
         try {
-            final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) current.getService("CollectionManagementService", "1.0");
+            final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) current.getService("CollectionManagementService", "1.0");
             final XmldbURI destName = destination.lastSegment();
             final Collection destCol = resolveCollection(destination);
             if (destCol == null) {
@@ -1309,7 +1306,7 @@ public class InteractiveClient {
     private synchronized boolean findRecursive(final Collection collection, final Path dir, final XmldbURI base) throws XMLDBException {
         Collection c;
         Resource document;
-        CollectionManagementServiceImpl mgtService;
+        EXistCollectionManagementService mgtService;
         //The XmldbURIs here aren't really used...
         XmldbURI next;
         MimeType mimeType;
@@ -1324,7 +1321,7 @@ public class InteractiveClient {
                         messageln("entering directory " + file.toAbsolutePath());
                         c = collection.getChildCollection(FileUtils.fileName(file));
                         if (c == null) {
-                            mgtService = (CollectionManagementServiceImpl) collection.getService("CollectionManagementService", "1.0");
+                            mgtService = (EXistCollectionManagementService) collection.getService("CollectionManagementService", "1.0");
                             c = mgtService.createCollection(XmldbURI.xmldbUriFor(FileUtils.fileName(file)));
                         }
 
@@ -1429,7 +1426,7 @@ public class InteractiveClient {
         final List<Path> files = FileUtils.list(dir);
         Collection c;
         Resource document;
-        CollectionManagementServiceImpl mgtService;
+        EXistCollectionManagementService mgtService;
         //The XmldbURIs here aren't really used...
         XmldbURI next;
         MimeType mimeType;
@@ -1442,7 +1439,7 @@ public class InteractiveClient {
                     messageln("entering directory " + file.toAbsolutePath().toString());
                     c = collection.getChildCollection(FileUtils.fileName(file));
                     if (c == null) {
-                        mgtService = (CollectionManagementServiceImpl) collection.getService("CollectionManagementService", "1.0");
+                        mgtService = (EXistCollectionManagementService) collection.getService("CollectionManagementService", "1.0");
                         c = mgtService.createCollection(XmldbURI.xmldbUriFor(FileUtils.fileName(file)));
                     }
                     if (c instanceof Observable && options.verbose) {
@@ -1569,18 +1566,15 @@ public class InteractiveClient {
     }
 
     /**
-     * stores given Resource
+     * stores given Resource.
      *
-     * @param fileName simple file or directory
+     * @param zipPath Path to a zip file
+     *
      * @throws XMLDBException
      */
-    protected synchronized boolean parseZip(String fileName) throws XMLDBException {
-        fileName = fileName.replace('/', java.io.File.separatorChar).replace('\\', java.io.File.separatorChar);
-
+    protected synchronized boolean parseZip(final Path zipPath) throws XMLDBException {
         try {
-            final ZipFile zfile = new ZipFile(fileName);
-            Resource document;
-            // String xml;
+            final ZipFile zfile = new ZipFile(zipPath.toFile());
             if (current instanceof Observable && options.verbose) {
                 final ProgressObserver observer = new ProgressObserver();
                 ((Observable) current).addObserver(observer);
@@ -1588,7 +1582,6 @@ public class InteractiveClient {
 
             final long start0 = System.currentTimeMillis();
             long bytes = 0;
-            MimeType mimeType;
             final Enumeration<? extends ZipEntry> e = zfile.entries();
             int number = 0;
 
@@ -1598,6 +1591,11 @@ public class InteractiveClient {
                 number++;
                 final ZipEntry ze = e.nextElement();
                 final String zeName = ze.getName().replace('\\', '/');
+
+                if (!Paths.get("/db").resolve(zeName).normalize().startsWith(Paths.get("/db"))) {
+                    throw new IOException("Detected archive exit attack! zipFile=" + zipPath.toAbsolutePath().toString() + ", entry=" + ze.getName());
+                }
+
                 final String[] pathSteps = zeName.split("/");
                 final StringBuilder currStr = new StringBuilder(pathSteps[0]);
                 for (int i = 1; i < pathSteps.length - 1; i++) {
@@ -1610,7 +1608,7 @@ public class InteractiveClient {
                     for (int i = 0; i < pathSteps.length - 1; i++) {
                         Collection c = base.getChildCollection(pathSteps[i]);
                         if (c == null) {
-                            final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) base.getService("CollectionManagementService", "1.0");
+                            final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) base.getService("CollectionManagementService", "1.0");
                             c = mgtService.createCollection(XmldbURI.xmldbUriFor(pathSteps[i]));
                         }
                         base = c;
@@ -1625,11 +1623,11 @@ public class InteractiveClient {
                 if (!ze.isDirectory()) {
                     final String localName = pathSteps[pathSteps.length - 1];
                     final long start = System.currentTimeMillis();
-                    mimeType = MimeTable.getInstance().getContentTypeFor(localName);
+                    MimeType mimeType = MimeTable.getInstance().getContentTypeFor(localName);
                     if (mimeType == null) {
                         mimeType = MimeType.BINARY_TYPE;
                     }
-                    document = base.createResource(localName, mimeType.getXMLDBType());
+                    final Resource document = base.createResource(localName, mimeType.getXMLDBType());
                     message("storing Zip-entry document " + localName + " (" + (number)
                             + " of " + zfile.size() + ") ...");
                     document.setContent(new ZipEntryInputSource(zfile, ze));
@@ -1644,9 +1642,9 @@ public class InteractiveClient {
             messageln("parsed " + bytes + " bytes in "
                     + (System.currentTimeMillis() - start0) + "ms.");
         } catch (final URISyntaxException e) {
-            errorln("uri syntax exception parsing a ZIP entry from " + fileName + ": " + e.getMessage());
+            errorln("uri syntax exception parsing a ZIP entry from " +  zipPath.toString()+ ": " + e.getMessage());
         } catch (final IOException e) {
-            errorln("could not parse ZIP file " + fileName + ": " + e.getMessage());
+            errorln("could not parse ZIP file " + zipPath.toAbsolutePath() + ": " + e.getMessage());
         }
         return true;
     }
@@ -1716,7 +1714,7 @@ public class InteractiveClient {
             try {
                 c = collection.getChildCollection(filenameUri.toString());
                 if (c == null) {
-                    final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) collection.getService("CollectionManagementService", "1.0");
+                    final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) collection.getService("CollectionManagementService", "1.0");
                     c = mgtService.createCollection(filenameUri);
                 }
             } catch (final XMLDBException e) {
@@ -1783,7 +1781,7 @@ public class InteractiveClient {
             p = p.append(segments[i]);
             final Collection c = DatabaseManager.getCollection(properties.getProperty(URI) + p, properties.getProperty(USER), properties.getProperty(PASSWORD));
             if (c == null) {
-                final CollectionManagementServiceImpl mgtService = (CollectionManagementServiceImpl) current.getService("CollectionManagementService", "1.0");
+                final EXistCollectionManagementService mgtService = (EXistCollectionManagementService) current.getService("CollectionManagementService", "1.0");
                 current = mgtService.createCollection(segments[i]);
             } else {
                 current = c;

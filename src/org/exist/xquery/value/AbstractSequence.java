@@ -27,6 +27,7 @@ import org.exist.dom.persistent.NodeHandle;
 import org.exist.dom.persistent.NodeProxy;
 import org.exist.numbering.NodeId;
 import org.exist.xquery.Cardinality;
+import org.exist.xquery.ErrorCodes;
 import org.exist.xquery.XPathException;
 import org.exist.xquery.XQueryContext;
 
@@ -65,7 +66,12 @@ public abstract class AbstractSequence implements Sequence {
         throw new IllegalArgumentException("Illegal argument");
     }
 
-    public AtomicValue convertTo(int requiredType) throws XPathException {
+    @Override
+    public AtomicValue convertTo(final int requiredType) throws XPathException {
+        if(isEmpty()) {
+            return null;
+        }
+
         final Item first = itemAt(0);
         if (Type.subTypeOf(first.getType(), Type.ATOMIC)) {
             return first.convertTo(requiredType);
@@ -160,8 +166,8 @@ public abstract class AbstractSequence implements Sequence {
             if (OLD_EXIST_VERSION_COMPATIBILITY) {
                 return true;
             } else {
-                throw new XPathException(
-                        "err:FORG0006: effectiveBooleanValue: first item of '" +
+                throw new XPathException(ErrorCodes.FORG0006,
+                        "effectiveBooleanValue: first item of '" +
                                 (toString().length() < 20 ? toString() : toString().substring(0, 20) + "...") +
                                 "' is not a node, and sequence length > 1");
             }

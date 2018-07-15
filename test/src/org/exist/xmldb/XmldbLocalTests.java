@@ -21,11 +21,6 @@
  */
 package org.exist.xmldb;
 
-import java.io.File;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
-import org.exist.TestUtils;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
@@ -33,6 +28,7 @@ import org.junit.runners.Suite;
 @Suite.SuiteClasses({
     CreateCollectionsTest.class,
     ResourceTest.class,
+    LocalXMLResourceDOMTest.class,
     BinaryResourceUpdateTest.class,
     ResourceSetTest.class,
     TestEXistXMLSerialize.class,
@@ -40,7 +36,8 @@ import org.junit.runners.Suite;
     ContentAsDOMTest.class,
     XmldbURITest.class,
     CollectionConfigurationTest.class,
-    CollectionTest.class
+    CollectionTest.class,
+    SerializationTest.class
     /* MultiDBTest.class */
 })
 public class XmldbLocalTests {

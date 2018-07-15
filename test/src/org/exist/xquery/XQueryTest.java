@@ -22,9 +22,21 @@
 package org.exist.xquery;
 
 import org.custommonkey.xmlunit.DetailedDiff;
+import org.exist.EXistException;
+import org.exist.dom.QName;
+import org.exist.security.PermissionDeniedException;
+import org.exist.source.SourceFactory;
+import org.exist.storage.BrokerPool;
+import org.exist.storage.DBBroker;
+import org.exist.storage.XQueryPool;
 import org.exist.test.ExistXmldbEmbeddedServer;
 import org.exist.xmldb.EXistResource;
+import org.exist.xmldb.EXistXPathQueryService;
 import org.exist.xmldb.XmldbURI;
+import org.exist.xquery.value.IntegerValue;
+import org.exist.xquery.value.Item;
+import org.exist.xquery.value.Sequence;
+import org.exist.xquery.value.Type;
 import org.junit.*;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -38,17 +50,23 @@ import org.xmldb.api.modules.CollectionManagementService;
 import org.xmldb.api.modules.XMLResource;
 import org.xmldb.api.modules.XPathQueryService;
 import org.xmldb.api.modules.XQueryService;
+import org.xmlunit.builder.DiffBuilder;
+import org.xmlunit.builder.Input;
+import org.xmlunit.diff.Diff;
 
 import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Source;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
+import java.util.Arrays;
 
 import static org.custommonkey.xmlunit.XMLAssert.assertXMLEqual;
 import static org.custommonkey.xmlunit.XMLUnit.compareXML;
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeTrue;
 
 /**
  * I propose that we put here in XQueryTest the tests involving all the
@@ -319,7 +337,6 @@ public class XQueryTest {
     /**
      * @author Gev
      */
-    @Ignore
     @Test
     public void inMemoryNodeSequences() throws XMLDBException {
         ResourceSet result;
@@ -329,36 +346,46 @@ public class XQueryTest {
                 (XPathQueryService) getTestCollection().getService(
                 "XPathQueryService",
                 "1.0");
+
         query = "let $c := (<a/>,<b/>) return <t>text{$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>text<a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,<b/>) return <t><text/>{$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t><text/><a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>\n    <text/>\n    <a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,<b/>) return <t>{\"text\"}{$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>text<a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,\"b\") return <t>text{$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>text<a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,\"b\") return <t><text/>{$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t><text/><a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>\n    <text/>\n    <a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,\"b\") return <t>{\"text\"}{$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>text<a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,<b/>) return <t>{<text/>,$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>\n    <text/>\n    <a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,<b/>) return <t>{\"text\",$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>text<a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,\"b\") return <t>{<text/>,$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>\n    <text/>\n    <a/>\n</t>", result.getResource(0).getContent());
+
         query = "let $c := (<a/>,\"b\") return <t>{\"text\",$c[1]}</t>";
         result = service.query(query);
-        assertEquals("XQuery: " + query, "<t>text<a/></t>", result.getResource(0).getContent());
+        assertEquals("XQuery: " + query, "<t>text<a/>\n</t>", result.getResource(0).getContent());
     }
 
     @Test
@@ -511,7 +538,7 @@ public class XQueryTest {
         query = "let $v as item()* := ()\n" + "return $v";
         result = service.query(query);
         assertEquals("XQuery: " + query, 0, result.getSize());
-        query = "let $v as empty() := ()\n" + "return $v";
+        query = "let $v as empty-sequence() := ()\n" + "return $v";
         result = service.query(query);
         assertEquals("XQuery: " + query, 0, result.getSize());
         query = "let $v as item() := ()\n" + "return $v";
@@ -559,7 +586,7 @@ public class XQueryTest {
         query = "declare variable $v as item()* { () };\n" + "$v";
         result = service.query(query);
         assertEquals("XQuery: " + query, 0, result.getSize());
-        query = "declare variable $v as empty() { () };\n" + "$v";
+        query = "declare variable $v as empty-sequence() { () };\n" + "$v";
         result = service.query(query);
         assertEquals("XQuery: " + query, 0, result.getSize());
         query = "declare variable $v as item() { () };\n" + "$v";
@@ -1094,6 +1121,80 @@ public class XQueryTest {
     }
 
     @Test
+    public void importExternalClasspathMainModule() throws EXistException, IOException, PermissionDeniedException, XPathException, QName.IllegalQNameException {
+        final long timestamp = System.currentTimeMillis();
+        final BrokerPool brokerPool = BrokerPool.getInstance();
+        try (final DBBroker broker = brokerPool.getBroker()) {
+            final org.exist.source.Source source = SourceFactory.getSource(broker, "/", "resource:org/exist/xquery/external-classpath-main-module.xq", false);
+
+            final XQuery xquery = brokerPool.getXQueryService();
+            final XQueryPool queryPool = brokerPool.getXQueryPool();
+
+            CompiledXQuery compiled = null;
+            XQueryContext context = null;
+            try {
+                compiled = queryPool.borrowCompiledXQuery(broker, source);
+                context = compiled == null ? new XQueryContext(brokerPool) : compiled.getContext();
+
+                context.declareVariable(new QName("s"), new IntegerValue(timestamp));
+
+                if(compiled == null) {
+                    compiled = xquery.compile(broker, context, source);
+                }
+
+                final Sequence result = xquery.execute(broker, compiled, null, null);
+                assertEquals(1, result.getItemCount());
+                final Item item = result.itemAt(0);
+                assertTrue(Type.subTypeOf(item.getType(), Type.NODE));
+
+                final Source expected = Input.fromString("<echo>" + timestamp + "</echo>").build();
+                final Source actual = Input.fromNode((Node)item).build();
+                final Diff diff = DiffBuilder.compare(expected).withTest(actual)
+                        .checkForSimilar()
+                        .build();
+                assertFalse(diff.toString(), diff.hasDifferences());
+
+            } finally {
+                if (compiled != null) {
+                    compiled.reset();
+                }
+                if (context != null) {
+                    context.reset();
+                }
+                if (compiled != null) {
+                    queryPool.returnCompiledXQuery(source, compiled);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void importExternalClasspathLibraryModule() throws XMLDBException {
+        final long timestamp = System.currentTimeMillis();
+        final Collection testCollection = getTestCollection();
+        final Resource doc = testCollection.createResource("import-external-classpath.xq", "BinaryResource");
+        doc.setContent(
+                "import module namespace ext1 = \"http://import-external-classpath-library-module-test.com\" at \"resource:org/exist/xquery/external-classpath-library-module.xqm\";\n"
+                + "ext1:echo(" + timestamp + ")"
+        );
+        ((EXistResource) doc).setMimeType("application/xquery");
+        testCollection.storeResource(doc);
+
+        final EXistXPathQueryService service = (EXistXPathQueryService) testCollection.getService("XPathQueryService", "1.0");
+        final ResourceSet resourceSet = service.executeStoredQuery("/db/test/import-external-classpath.xq");
+
+        assertEquals(1, resourceSet.getSize());
+
+        final Resource resource = resourceSet.getResource(0);
+        final Source expected = Input.fromString("<echo>" + timestamp + "</echo>").build();
+        final Source actual = Input.fromString(resource.getContent().toString()).build();
+        final Diff diff = DiffBuilder.compare(expected).withTest(actual)
+                .checkForIdentical()
+                .build();
+        assertFalse(diff.toString(), diff.hasDifferences());
+    }
+
+    @Test
     public void doubleDocNode_2078755() throws XMLDBException {
         Collection testCollection = getTestCollection();
         Resource doc = testCollection.createResource(MODULE8_NAME, "BinaryResource");
@@ -1211,8 +1312,6 @@ public class XQueryTest {
     @Test
     public void functionDocExternal() throws XMLDBException {
         boolean hasInternetAccess = false;
-        ResourceSet result;
-        String query;
 
         //Checking that we have an Internet Access
         try {
@@ -1227,16 +1326,12 @@ public class XQueryTest {
         } catch (IOException e) {
             //Ignore
         }
-
-        if (!hasInternetAccess) {
-            System.out.println("No Internet access: skipping 'testFunctionDocExternal' tests");
-            return;
-        }
+        assumeTrue("No Internet access: skipping 'functionDocExternal' tests", hasInternetAccess);
 
         XPathQueryService service =
                 storeXMLStringAndGetQueryService(NUMBERS_XML, numbers);
-        query = "if (doc-available(\"http://www.w3.org/XML/Core/\")) then doc(\"http://www.w3.org/XML/Core/\") else ()";
-        result = service.query(query);
+        String query = "if (doc-available(\"http://www.w3.org/XML/Core/\")) then doc(\"http://www.w3.org/XML/Core/\") else ()";
+        ResourceSet result = service.query(query);
         assertEquals("XQuery: " + query, 1, result.getSize());
         query = "if (doc-available(\"http://www.w3.org/XML/dummy\")) then doc(\"http://www.w3.org/XML/dummy\") else ()";
         result = service.query(query);
@@ -1262,13 +1357,10 @@ public class XQueryTest {
         assertEquals("XQuery: " + query, "false", result.getResource(0).getContent());
     }
 
-    private String makeString(int n) {
-        StringBuffer b = new StringBuffer();
-        char c = 'a';
-        for (int i = 0; i < n; i++) {
-            b.append(c);
-        }
-        return b.toString();
+    private String makeString(final int n) {
+        final char buf[] = new char[n];
+        Arrays.fill(buf, 'a');
+        return new String(buf);
     }
 
     @Test
@@ -2113,7 +2205,6 @@ public class XQueryTest {
     /**
      * @see http://sourceforge.net/support/tracker.php?aid=1846228
      */
-    @Ignore
     @Test
     public void namespaceHandlingSameModule_1846228() throws XMLDBException {
         String query = "declare option exist:serialize 'indent=no';" +

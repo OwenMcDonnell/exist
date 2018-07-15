@@ -398,7 +398,6 @@ public class Indexer extends Observable implements ContentHandler, LexicalHandle
     @Override
     public void endElement(final String namespace, final String name, final String qname) {
         final ElementImpl last = stack.peek();
-        if (last.getNodeName().equals(qname)) {
             processText(last, ProcessTextParent.ELEMENT_END);
             stack.pop();
             XMLString elemContent = null;
@@ -424,7 +423,6 @@ public class Indexer extends Observable implements ContentHandler, LexicalHandle
             currentPath.removeLastComponent();
             setPrevious(last);
             level--;
-        }
     }
 
     /**
@@ -654,10 +652,6 @@ public class Indexer extends Observable implements ContentHandler, LexicalHandle
                     // an xml:id attribute. Normalize the attribute and set its
                     // type to ID
                     attr.setValue(StringValue.trimWhitespace(StringValue.collapseWhitespace(attr.getValue())));
-
-                    if (!XMLChar.isValidNCName(attr.getValue())) {
-                        throw new SAXException("Value of xml:id attribute is not a valid NCName: " + attr.getValue());
-                    }
 
                     attr.setType(AttrImpl.ID);
                 } else if (attr.getQName().equals(Namespaces.XML_SPACE_QNAME)) {

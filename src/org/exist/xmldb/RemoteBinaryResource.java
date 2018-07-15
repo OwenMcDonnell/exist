@@ -21,8 +21,11 @@ package org.exist.xmldb;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Properties;
 
+import org.apache.xmlrpc.client.XmlRpcClient;
 import org.exist.util.EXistInputSource;
+import org.exist.util.Leasable;
 import org.exist.util.MimeType;
 import org.w3c.dom.DocumentType;
 import org.xml.sax.ext.LexicalHandler;
@@ -30,15 +33,26 @@ import org.xmldb.api.base.ErrorCodes;
 import org.xmldb.api.base.XMLDBException;
 import org.xmldb.api.modules.BinaryResource;
 
+import javax.annotation.Nullable;
+
 /**
  * @author wolf
  */
 public class RemoteBinaryResource
         extends AbstractRemoteResource
         implements BinaryResource {
-    public RemoteBinaryResource(final RemoteCollection parent, final XmldbURI documentName) throws XMLDBException {
-        super(parent, documentName, MimeType.BINARY_TYPE.getName());
 
+    private String type = null;
+    private byte[] content = null;  // only used for binary results from an XQuery execution, where we have been sent the result
+
+    public RemoteBinaryResource(final Leasable<XmlRpcClient>.Lease xmlRpcClientLease, final RemoteCollection parent, final XmldbURI documentName) throws XMLDBException {
+        super(xmlRpcClientLease, parent, documentName, MimeType.BINARY_TYPE.getName());
+    }
+
+    public RemoteBinaryResource(final Leasable<XmlRpcClient>.Lease xmlRpcClientLease, final RemoteCollection parent, final XmldbURI documentName, final String type, final byte[] content) throws XMLDBException {
+        super(xmlRpcClientLease, parent, documentName, MimeType.BINARY_TYPE.getName());
+        this.type = type;
+        this.content = content;
     }
 
     @Override
@@ -53,35 +67,32 @@ public class RemoteBinaryResource
 
     @Override
     public Object getExtendedContent() throws XMLDBException {
-        return getExtendedContentInternal(null, false, -1, -1);
+        return getExtendedContentInternal(content, false, -1, -1);
     }
 
     @Override
     public long getStreamLength()
             throws XMLDBException {
-        return getStreamLengthInternal(null);
+        return getStreamLengthInternal(content);
     }
 
     @Override
     public InputStream getStreamContent()
             throws XMLDBException {
-        return getStreamContentInternal(null, false, -1, -1);
+        return getStreamContentInternal(content, false, -1, -1);
     }
 
     @Override
-    public void getContentIntoAStream(OutputStream os)
+    public void getContentIntoAStream(final OutputStream os)
             throws XMLDBException {
-        getContentIntoAStreamInternal(os, null, false, -1, -1);
+        getContentIntoAStreamInternal(os, content, false, -1, -1);
     }
 
     protected String getStreamSymbolicPath() {
         String retval = "<streamunknown>";
 
-        if (vfile != null) {
-            final Object content = vfile.getContent();
-            if (content instanceof java.io.File) {
-                retval = ((java.io.File) content).getAbsolutePath();
-            }
+        if (file != null) {
+            retval = file.toAbsolutePath().toString();
         } else if (inputSource != null && inputSource instanceof EXistInputSource) {
             retval = ((EXistInputSource) inputSource).getSymbolicPath();
         }
@@ -108,6 +119,9 @@ public class RemoteBinaryResource
 
     @Override
     public void setDocType(final DocumentType doctype) throws XMLDBException {
+    }
 
+    @Override
+    @Nullable public void setProperties(final Properties properties) {
     }
 }

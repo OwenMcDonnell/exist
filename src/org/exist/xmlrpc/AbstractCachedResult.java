@@ -19,6 +19,10 @@
  */
 package org.exist.xmlrpc;
 
+import org.xmldb.api.base.XMLDBException;
+
+import java.io.Closeable;
+
 /**
  * Simple abstract container for serialized resources or results of a query.
  * Used to cache them that may be retrieved by chunks later by the client.
@@ -26,11 +30,12 @@ package org.exist.xmlrpc;
  * @author wolf
  * @author jmfernandez
  */
-public abstract class AbstractCachedResult {
+public abstract class AbstractCachedResult implements Closeable {
 
     protected long queryTime = 0;
     protected long creationTimestamp = 0;
     protected long timestamp = 0;
+    private boolean closed;
 
     public AbstractCachedResult() {
         this(0);
@@ -72,12 +77,6 @@ public abstract class AbstractCachedResult {
     }
 
     /**
-     * This abstract method must be used
-     * to free internal variables.
-     */
-    public abstract void free();
-
-    /**
      * This abstract method returns the cached result
      * or null
      *
@@ -85,13 +84,53 @@ public abstract class AbstractCachedResult {
      */
     public abstract Object getResult();
 
+    /**
+     * Returns true if the Cached Result
+     * has been closed.
+     */
+    public final boolean isClosed() {
+        return closed;
+    }
+
+    /**
+     * Implement this in your sub-class if you need
+     * to do cleanup.
+     *
+     * The method will only be called once, no matter
+     * how many times the user calls {@link #close()}.
+     */
+    protected void doClose() {
+        //no-op
+    }
+
+    @Override
+    public final void close() {
+        if(!isClosed()) {
+            try {
+                doClose();
+            } finally {
+                closed = true;
+            }
+        }
+    }
+
+    /**
+     * This abstract method must be used
+     * to free internal variables.
+     *
+     * @deprecated Call {@link #close()} instead.
+     */
+    @Deprecated
+    public final void free() {
+        close();
+    }
+
     @Override
     protected void finalize() throws Throwable {
         // Calling free to reclaim pinned resources
         try {
-            free();
-        }
-        finally {
+            close();
+        } finally {
             super.finalize();
         }
     }

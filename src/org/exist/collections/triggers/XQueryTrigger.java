@@ -144,7 +144,8 @@ public class XQueryTrigger extends SAXTrigger implements DocumentTrigger, Collec
 	/**
 	 * @link org.exist.collections.Trigger#configure(org.exist.storage.DBBroker, org.exist.collections.Collection, java.util.Map)
 	 */
-	public void configure(DBBroker broker, Collection parent, Map<String, List<?>> parameters) throws TriggerException
+    @Override
+	public void configure(DBBroker broker, Txn transaction, Collection parent, Map<String, List<?>> parameters) throws TriggerException
 	{
  		this.collection = parent;
  		
@@ -165,38 +166,33 @@ public class XQueryTrigger extends SAXTrigger implements DocumentTrigger, Collec
 
             final List<String> strQueries = (List<String>) parameters.get("query");
  			strQuery = strQueries != null ? strQueries.get(0) : null;
- 			
- 			for(final Iterator itParamName = parameters.keySet().iterator(); itParamName.hasNext();)
- 			{
- 				final String paramName = (String)itParamName.next();
- 				
+
+			for (final Map.Entry<String, List<?>> entry : parameters.entrySet()) {
+ 				final String paramName = entry.getKey();
+				final Object paramValue = entry.getValue().get(0);
+
  				//get the binding prefix (if any)
- 				if("bindingPrefix".equals(paramName))
- 				{
- 					final String bindingPrefix = (String)parameters.get("bindingPrefix").get(0);
- 					if(bindingPrefix != null && !"".equals(bindingPrefix.trim()))
- 					{
+ 				if("bindingPrefix".equals(paramName)) {
+					final String bindingPrefix = (String) paramValue;
+ 					if(bindingPrefix != null && !bindingPrefix.trim().isEmpty()) {
  						this.bindingPrefix = bindingPrefix.trim() + ":";
  					}
  				}
- 				
+
  				//get the URL of the query (if any)
- 				else if("url".equals(paramName))
- 				{
- 					urlQuery = (String)parameters.get("url").get(0);
+ 				else if("url".equals(paramName)) {
+					urlQuery = (String) paramValue;
  				}
- 				
+
  				//get the query (if any)
- 				else if("query".equals(paramName))
- 				{
- 					strQuery = (String)parameters.get("query").get(0);
+ 				else if("query".equals(paramName)) {
+					strQuery = (String) paramValue;
  				}
- 				
+
  				//make any other parameters available as external variables for the query
- 				else
- 				{
+ 				else {
                     //TODO could be enhanced to setup a sequence etc
- 					userDefinedVariables.put(paramName, parameters.get(paramName).get(0));
+ 					userDefinedVariables.put(paramName, paramValue);
  				}
  			}
  			
@@ -222,7 +218,7 @@ public class XQueryTrigger extends SAXTrigger implements DocumentTrigger, Collec
 	/**
 	 * Get's a Source for the Trigger's XQuery
 	 * 
-	 * @param the database broker
+	 * @param broker the database broker
 	 * 
 	 * @return the Source for the XQuery 
 	 */

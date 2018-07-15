@@ -46,6 +46,8 @@ import org.exist.xquery.value.SequenceType;
 import org.exist.xquery.value.StringValue;
 import org.exist.xquery.value.Type;
 
+import static org.exist.xquery.regex.RegexUtil.*;
+
 /**
  * @author Wolfgang Meier (wolfgang@exist-db.org)
  */
@@ -84,7 +86,7 @@ public class FunReplace extends FunMatches {
 	protected static final FunctionParameterSequenceType PATTERN_ARG = new FunctionParameterSequenceType("pattern", Type.STRING, Cardinality.EXACTLY_ONE, "The pattern to match");
 	protected static final FunctionParameterSequenceType REPLACEMENT_ARG = new FunctionParameterSequenceType("replacement", Type.STRING, Cardinality.EXACTLY_ONE, "The string to replace the pattern with");
 	protected static final FunctionParameterSequenceType FLAGS_ARG = new FunctionParameterSequenceType("flags", Type.STRING, Cardinality.EXACTLY_ONE, "The flags");
-	protected static final FunctionReturnSequenceType RETURN_TYPE = new FunctionReturnSequenceType(Type.STRING, Cardinality.ZERO_OR_ONE, "the altered string");
+	protected static final FunctionReturnSequenceType RETURN_TYPE = new FunctionReturnSequenceType(Type.STRING, Cardinality.EXACTLY_ONE, "the altered string");
 			
 	public final static FunctionSignature signatures[] = {
 		new FunctionSignature(
@@ -166,7 +168,7 @@ public class FunReplace extends FunMatches {
 		} else {
 			final int flags;
 			if (getSignature().getArgumentCount() == 4) {
-				flags =	parseFlags(getArgument(3).eval(contextSequence, contextItem).getStringValue());
+				flags =	parseFlags(this, getArgument(3).eval(contextSequence, contextItem).getStringValue());
 			} else {
 				flags = 0;
 			}
@@ -187,7 +189,7 @@ public class FunReplace extends FunMatches {
 						.replace("\\", "\\\\")
 						.replace("$", "\\$");
 			} else {
-				pattern = translateRegexp(patternSeq.getStringValue(), hasIgnoreWhitespace(flags), hasCaseInsensitive(flags));
+				pattern = translateRegexp(this, patternSeq.getStringValue(), hasIgnoreWhitespace(flags), hasCaseInsensitive(flags));
 			}
 
             //An error is raised [err:FORX0004] if the value of $replacement contains a "$" character that is not immediately followed by a digit 0-9 and not immediately preceded by a "\".
@@ -198,10 +200,10 @@ public class FunReplace extends FunMatches {
             	if (replace.charAt(i) == '$') {
             		try {
             			if (!(replace.charAt(i - 1) == '\\' || Character.isDigit(replace.charAt(i + 1))))
-            				throw new XPathException(this, "err:FORX0004 The value of $replacement contains a '$' character that is not immediately followed by a digit 0-9 and not immediately preceded by a '\\'.");
+            				throw new XPathException(this, ErrorCodes.FORX0004, "The value of $replacement contains a '$' character that is not immediately followed by a digit 0-9 and not immediately preceded by a '\\'.");
             		//Handle index exceptions
             		} catch (Exception e){
-            			throw new XPathException(this, "err:FORX0004 The value of $replacement contains a '$' character that is not immediately followed by a digit 0-9 and not immediately preceded by a '\\'.");
+            			throw new XPathException(this, ErrorCodes.FORX0004, "The value of $replacement contains a '$' character that is not immediately followed by a digit 0-9 and not immediately preceded by a '\\'.");
             		}
             	}
             	*/

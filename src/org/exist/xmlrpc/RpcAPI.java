@@ -33,6 +33,8 @@ import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.XPathException;
 import org.xml.sax.SAXException;
 
+import javax.annotation.Nullable;
+
 /**
  * Defines the methods callable through the XMLRPC interface.
  *
@@ -41,23 +43,23 @@ import org.xml.sax.SAXException;
  */
 public interface RpcAPI {
 
-    public final static String SORT_EXPR = "sort-expr";
-    public final static String NAMESPACES = "namespaces";
-    public final static String VARIABLES = "variables";
-    public final static String BASE_URI = "base-uri";
-    public final static String STATIC_DOCUMENTS = "static-documents";
-    public final static String PROTECTED_MODE = "protected";
-    public static final String ERROR = "error";
-    public static final String LINE = "line";
-    public static final String COLUMN = "column";
-    public static final String MODULE_LOAD_PATH = "module-load-path";
+    String SORT_EXPR = "sort-expr";
+    String NAMESPACES = "namespaces";
+    String VARIABLES = "variables";
+    String BASE_URI = "base-uri";
+    String STATIC_DOCUMENTS = "static-documents";
+    String PROTECTED_MODE = "protected";
+    String ERROR = "error";
+    String LINE = "line";
+    String COLUMN = "column";
+    String MODULE_LOAD_PATH = "module-load-path";
 
     /**
      * Return the database version.
      *
      * @return database version
      */
-    public String getVersion();
+    String getVersion();
 
     /**
      * Shut down the database immediately.
@@ -65,7 +67,7 @@ public interface RpcAPI {
      * @return true if the shutdown succeeded, false otherwise
      * @throws org.exist.security.PermissionDeniedException
      */
-    public boolean shutdown() throws PermissionDeniedException;
+    boolean shutdown() throws PermissionDeniedException;
 
     /**
      * Shut down the database after the specified delay (in milliseconds).
@@ -76,7 +78,7 @@ public interface RpcAPI {
      * @Deprecated {@see org.exist.xmlrpc.RpcAPI#shutdown(long)
      */
     @Deprecated
-    public boolean shutdown(String delay) throws PermissionDeniedException;
+    boolean shutdown(String delay) throws PermissionDeniedException;
 
     /**
      * Shut down the database after the specified delay (in milliseconds).
@@ -85,9 +87,13 @@ public interface RpcAPI {
      * @return true if the shutdown succeeded, false otherwise
      * @throws PermissionDeniedException
      */
-    public boolean shutdown(long delay) throws PermissionDeniedException;
+    boolean shutdown(long delay) throws PermissionDeniedException;
 
-    public boolean sync();
+    boolean sync();
+
+    boolean enterServiceMode() throws PermissionDeniedException;
+
+    void exitServiceMode() throws PermissionDeniedException;
 
     /**
      * Retrieve document by name. XML content is indented if prettyPrint is set
@@ -353,19 +359,48 @@ public interface RpcAPI {
     String retrieveAsString(String doc, String id, Map<String, Object> parameters)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public byte[] retrieveAll(int resultId, Map<String, Object> parameters)
+    byte[] retrieveAll(int resultId, Map<String, Object> parameters)
             throws EXistException, PermissionDeniedException;
 
-    public Map<String, Object> retrieveAllFirstChunk(int resultId, Map<String, Object> parameters)
+    Map<String, Object> retrieveAllFirstChunk(int resultId, Map<String, Object> parameters)
             throws EXistException, PermissionDeniedException;
 
     Map<String, Object> compile(byte[] xquery, Map<String, Object> parameters)  throws EXistException, PermissionDeniedException;
 
+    /**
+     * @deprecated Use {@link #queryPT(byte[], Map)} instead.
+     */
+    @Deprecated
     Map<String, Object> queryP(byte[] xpath, Map<String, Object> parameters)
             throws EXistException, PermissionDeniedException;
 
+    /**
+     * @deprecated Use {@link #queryPT(byte[], String, String, Map)} instead.
+     */
+    @Deprecated
     Map<String, Object> queryP(byte[] xpath, String docName, String s_id, Map<String, Object> parameters)
             throws EXistException, PermissionDeniedException, URISyntaxException;
+
+    /**
+     * XQuery with typed response.
+     *
+     * @param xquery The XQuery (or XPath) to execute
+     * @param parameters Any parameters for controlling the query execution.
+     */
+    Map<String, Object> queryPT(byte[] xquery, Map<String, Object> parameters)
+            throws EXistException, PermissionDeniedException;
+
+    /**
+     * XQuery with typed response.
+     *
+     * @param xquery The XQuery (or XPath) to execute
+     * @param docName The name of the document to set as the static context.
+     * @param s_id The node if to set as the static context.
+     * @param parameters Any parameters for controlling the query execution.
+     */
+    Map<String, Object> queryPT(byte[] xquery, @Nullable String docName, @Nullable String s_id, Map<String, Object> parameters)
+            throws EXistException, PermissionDeniedException, URISyntaxException;
+
 
     /**
      * execute XPath query and return howmany nodes from the result set,
@@ -376,11 +411,15 @@ public interface RpcAPI {
      * @param howmany maximum number of results to return.
      * @param start item in the result set to start with.
      * @param parameters
+     *
      * @return Description of the Return Value
+     *
      * @exception EXistException Description of the Exception
      * @exception PermissionDeniedException Description of the Exception
-     * @deprecated use List query() or int executeQuery() instead
+     *
+     * @deprecated use {@link #queryPT(byte[], Map)} or int {@link #executeQuery(byte[], Map)} instead.
      */
+    @Deprecated
     byte[] query(
             byte[] xquery,
             int howmany,
@@ -436,7 +475,7 @@ public interface RpcAPI {
      * @throws EXistException
      * @throws org.exist.security.PermissionDeniedException
      */
-    public String printDiagnostics(String query, Map<String, Object> parameters)
+    String printDiagnostics(String query, Map<String, Object> parameters)
             throws EXistException, PermissionDeniedException;
 
     String createResourceId(String collection)
@@ -541,16 +580,16 @@ public interface RpcAPI {
      * @throws org.xml.sax.SAXException
      * @throws java.net.URISyntaxException
      */
-    public boolean parseLocal(String localFile, String docName, boolean replace, String mimeType)
+    boolean parseLocal(String localFile, String docName, boolean replace, String mimeType)
             throws EXistException, PermissionDeniedException, SAXException, URISyntaxException;
 
-    public boolean parseLocalExt(String localFile, String docName, boolean replace, String mimeType, boolean treatAsXML)
+    boolean parseLocalExt(String localFile, String docName, boolean replace, String mimeType, boolean treatAsXML)
             throws EXistException, PermissionDeniedException, SAXException, URISyntaxException;
 
-    public boolean parseLocal(String localFile, String docName, boolean replace, String mimeType, Date created, Date modified)
+    boolean parseLocal(String localFile, String docName, boolean replace, String mimeType, Date created, Date modified)
             throws EXistException, PermissionDeniedException, SAXException, URISyntaxException;
 
-    public boolean parseLocalExt(String localFile, String docName, boolean replace, String mimeType, boolean treatAsXML, Date created, Date modified)
+    boolean parseLocalExt(String localFile, String docName, boolean replace, String mimeType, boolean treatAsXML, Date created, Date modified)
             throws EXistException, PermissionDeniedException, SAXException, URISyntaxException;
 
     /**
@@ -566,10 +605,10 @@ public interface RpcAPI {
      * @throws PermissionDeniedException
      * @throws java.net.URISyntaxException
      */
-    public boolean storeBinary(byte[] data, String docName, String mimeType, boolean replace)
+    boolean storeBinary(byte[] data, String docName, String mimeType, boolean replace)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean storeBinary(byte[] data, String docName, String mimeType, boolean replace, Date created, Date modified)
+    boolean storeBinary(byte[] data, String docName, String mimeType, boolean replace, Date created, Date modified)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
     /**
@@ -635,13 +674,37 @@ public interface RpcAPI {
      * Execute XPath/XQuery from path file (stored inside eXist) returned
      * reference may be used later to get a summary of results or retrieve the
      * actual hits.
-     * @param path
-     * @param parameters
-     * @return 
+     * @param path Path of the stored query in the database
+     * @param parameters Parameters to the execution.
+     *
+     * @return Either a reference to a node or the value if a non-node
+     *
      * @throws org.exist.EXistException
      * @throws org.exist.security.PermissionDeniedException
+     *
+     * @deprecated Use {@link #executeT(String, Map)} instead.
      */
+    @Deprecated
     Map<String, Object> execute(String path, Map<String, Object> parameters)
+            throws EXistException, PermissionDeniedException;
+
+
+    /**
+     * Execute XPath/XQuery from path file (stored inside eXist) returned
+     * reference may be used later to get a summary of results or retrieve the
+     * actual hits.
+     *
+     * @param path Path of the stored query in the database
+     * @param parameters Parameters to the execution.
+     *
+     * @return Details of items from the result, including type information.
+     *
+     * @throws org.exist.EXistException
+     * @throws org.exist.security.PermissionDeniedException
+     *
+     * @deprecated Use {@link #executeT(String, Map)} instead.
+     */
+    Map<String, Object> executeT(String path, Map<String, Object> parameters)
             throws EXistException, PermissionDeniedException;
 
     /**
@@ -736,6 +799,8 @@ public interface RpcAPI {
 
     boolean addGroup(String name, Map<String, String> metadata) throws EXistException, PermissionDeniedException;
 
+    boolean setUserPrimaryGroup(final String username, final String groupName) throws EXistException, PermissionDeniedException;
+
     boolean updateGroup(final String name, final List<String> managers, final Map<String, String> metadata) throws EXistException, PermissionDeniedException;
 
     List<String> getGroupMembers(final String groupName) throws EXistException, PermissionDeniedException;
@@ -744,26 +809,30 @@ public interface RpcAPI {
 
     void addGroupManager(final String manager, final String groupName) throws EXistException, PermissionDeniedException;
 
-    public void removeGroupManager(final String groupName, final String manager) throws EXistException, PermissionDeniedException;
+    void removeGroupManager(final String groupName, final String manager) throws EXistException, PermissionDeniedException;
 
-    boolean setPermissions(String resource, String permissions)
+    void removeGroupMember(final String group, final String member) throws EXistException, PermissionDeniedException;
+
+    boolean updateAccount(final String name, final List<String> groups) throws EXistException, PermissionDeniedException;
+
+    boolean setPermissions(String resource, String mode)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    boolean setPermissions(String resource, int permissions)
-            throws EXistException, PermissionDeniedException, URISyntaxException;
-
-    boolean setPermissions(
-            String resource,
-            String owner,
-            String ownerGroup,
-            String permissions)
+    boolean setPermissions(String resource, int mode)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
     boolean setPermissions(
             String resource,
             String owner,
-            String ownerGroup,
-            int permissions)
+            String group,
+            String mode)
+            throws EXistException, PermissionDeniedException, URISyntaxException;
+
+    boolean setPermissions(
+            String resource,
+            String owner,
+            String group,
+            int mode)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
     boolean setPermissions(
@@ -774,29 +843,29 @@ public interface RpcAPI {
             final List<ACEAider> aces)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean chgrp(
+    boolean chgrp(
             final String resource,
-            final String ownerGroup)
+            final String group)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean chown(
+    boolean chown(
             final String resource,
             final String owner)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean chown(
+    boolean chown(
             final String resource,
             final String owner,
-            final String ownerGroup)
+            final String group)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean lockResource(String path, String userName)
+    boolean lockResource(String path, String userName)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean unlockResource(String path)
+    boolean unlockResource(String path)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public String hasUserLock(String path)
+    String hasUserLock(String path)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
     Map<String, Object> getAccount(String name) throws EXistException, PermissionDeniedException;
@@ -854,13 +923,19 @@ public interface RpcAPI {
     boolean copyCollection(String collectionPath, String destinationPath, String newName)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
+    boolean copyCollection(String collectionPath, String destinationPath, String newName, final String preserveType)
+            throws EXistException, PermissionDeniedException, URISyntaxException;
+
     boolean copyResource(String docPath, String destinationPath, String newName)
+            throws EXistException, PermissionDeniedException, URISyntaxException;
+
+    boolean copyResource(String docPath, String destinationPath, String newName, final String preserveType)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
     boolean reindexCollection(String name)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean reindexDocument(String docUri) throws EXistException, PermissionDeniedException;
+    boolean reindexDocument(String docUri) throws EXistException, PermissionDeniedException;
 
     boolean backup(String userbackup, String password, String destcollection, String collection)
             throws EXistException, PermissionDeniedException;
@@ -876,13 +951,13 @@ public interface RpcAPI {
     boolean setDocType(String documentName, String doctypename, String publicid, String systemid)
             throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public void runCommand(XmldbURI collectionURI, List<String> params) throws EXistException, PermissionDeniedException;
+    void runCommand(XmldbURI collectionURI, List<String> params) throws EXistException, PermissionDeniedException;
 
-    public long getSubCollectionCreationTime(String parentPath, String name) throws EXistException, PermissionDeniedException, URISyntaxException;
+    long getSubCollectionCreationTime(String parentPath, String name) throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public Map<String, Object> getSubCollectionPermissions(String parentPath, String name) throws EXistException, PermissionDeniedException, URISyntaxException;
+    Map<String, Object> getSubCollectionPermissions(String parentPath, String name) throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public Map<String, Object> getSubResourcePermissions(String parentPath, String name) throws EXistException, PermissionDeniedException, URISyntaxException;
+    Map<String, Object> getSubResourcePermissions(String parentPath, String name) throws EXistException, PermissionDeniedException, URISyntaxException;
 
-    public boolean setTriggersEnabled(String path, String value) throws EXistException, PermissionDeniedException;
+    boolean setTriggersEnabled(String path, String value) throws EXistException, PermissionDeniedException;
 }

@@ -1,11 +1,11 @@
 package xquery.xinclude;
 
-import xquery.TestRunner;
+import org.exist.test.runner.XSuite;
+import org.junit.runner.RunWith;
 
-public class XIncludeTests extends TestRunner {
-
-    @Override
-    protected String getDirectory() {
-        return "test/src/xquery/xinclude";
-    }
+@RunWith(XSuite.class)
+@XSuite.XSuiteFiles({
+    "test/src/xquery/xinclude"
+})
+public class XIncludeTests {
 }

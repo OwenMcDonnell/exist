@@ -23,12 +23,14 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.xmlrpc.XmlRpcException;
 
+import org.apache.xmlrpc.client.XmlRpcClient;
 import org.exist.Namespaces;
 import org.exist.dom.persistent.DocumentTypeImpl;
+import org.exist.util.Leasable;
 import org.exist.util.MimeType;
+import org.exist.util.io.TemporaryFileManager;
 import org.exist.util.serializer.DOMSerializer;
 import org.exist.util.serializer.SAXSerializer;
-import org.exist.util.VirtualTempFile;
 import org.exist.xquery.value.StringValue;
 
 import org.w3c.dom.Document;
@@ -46,6 +48,7 @@ import org.xmldb.api.base.ErrorCodes;
 import org.xmldb.api.base.XMLDBException;
 import org.xmldb.api.modules.XMLResource;
 
+import javax.annotation.Nullable;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -53,11 +56,9 @@ import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 import javax.xml.transform.TransformerException;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.StringReader;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -84,19 +85,20 @@ public class RemoteXMLResource
     private Properties outputProperties = null;
     private LexicalHandler lexicalHandler = null;
 
-    public RemoteXMLResource(final RemoteCollection parent, final XmldbURI docId, final Optional<String> id)
+    public RemoteXMLResource(final Leasable<XmlRpcClient>.Lease xmlRpcClientLease, final RemoteCollection parent, final XmldbURI docId, final Optional<String> id)
             throws XMLDBException {
-        this(parent, -1, -1, docId, id);
+        this(xmlRpcClientLease, parent, -1, -1, docId, id);
     }
 
     public RemoteXMLResource(
+            final Leasable<XmlRpcClient>.Lease xmlRpcClientLease,
             final RemoteCollection parent,
             final int handle,
             final int pos,
             final XmldbURI docId,
             final Optional<String> id)
             throws XMLDBException {
-        super(parent, docId, MimeType.XML_TYPE.getName());
+        super(xmlRpcClientLease, parent, docId, MimeType.XML_TYPE.getName());
         this.handle = handle;
         this.pos = pos;
         this.id = id;
@@ -113,11 +115,12 @@ public class RemoteXMLResource
     }
 
     @Override
-    protected Properties getProperties() {
+    @Nullable public Properties getProperties() {
         return outputProperties == null ? super.getProperties() : outputProperties;
     }
 
-    protected void setProperties(final Properties properties) {
+    @Override
+    public void setProperties(final Properties properties) {
         this.outputProperties = properties;
     }
 
@@ -239,11 +242,8 @@ public class RemoteXMLResource
     @Override
     public void setContentAsDOM(final Node root) throws XMLDBException {
         try {
-            final VirtualTempFile vtmpfile = new VirtualTempFile();
-            vtmpfile.setTempPrefix("eXistRXR");
-            vtmpfile.setTempPostfix(".xml");
-
-            try (final OutputStreamWriter osw = new OutputStreamWriter(vtmpfile, "UTF-8")) {
+            final Path tempFile = TemporaryFileManager.getInstance().getTemporaryFile();
+            try (final Writer osw = Files.newBufferedWriter(tempFile, UTF_8)) {
                 final DOMSerializer xmlout = new DOMSerializer(osw, getProperties());
 
                 final short type = root.getNodeType();
@@ -252,14 +252,8 @@ public class RemoteXMLResource
                 } else {
                     throw new XMLDBException(ErrorCodes.VENDOR_ERROR, "invalid node type");
                 }
-            } finally {
-                try {
-                    vtmpfile.close();
-                } catch (final IOException ioe) {
-                    LOG.warn(ioe.getMessage(), ioe);
-                }
             }
-            setContent(vtmpfile);
+            setContent(tempFile);
         } catch (final TransformerException | IOException ioe) {
             throw new XMLDBException(ErrorCodes.VENDOR_ERROR, ioe.getMessage(), ioe);
         }
@@ -290,8 +284,8 @@ public class RemoteXMLResource
     }
 
     private class InternalXMLSerializer extends SAXSerializer {
-        VirtualTempFile vtmpfile = null;
-        OutputStreamWriter writer = null;
+        private Path tempFile = null;
+        private Writer writer = null;
 
         public InternalXMLSerializer() {
             super();
@@ -300,11 +294,9 @@ public class RemoteXMLResource
         @Override
         public void startDocument() throws SAXException {
             try {
-                vtmpfile = new VirtualTempFile();
-                vtmpfile.setTempPrefix("eXistRXR");
-                vtmpfile.setTempPostfix(".xml");
+                tempFile = TemporaryFileManager.getInstance().getTemporaryFile();
 
-                writer = new OutputStreamWriter(vtmpfile, "UTF-8");
+                writer = Files.newBufferedWriter(tempFile, UTF_8);
                 setOutput(writer, new Properties());
 
             } catch (final IOException ioe) {
@@ -323,11 +315,7 @@ public class RemoteXMLResource
                     writer.close();
                 }
 
-                if (vtmpfile != null) {
-                    vtmpfile.close();
-                }
-
-                setContent(vtmpfile);
+                setContent(tempFile);
             } catch (final IOException | XMLDBException e) {
                 throw new SAXException("Unable to set file content containing serialized data", e);
             }
@@ -356,7 +344,7 @@ public class RemoteXMLResource
         params.add(path.toString());
 
         try {
-            final Object[] request = (Object[]) collection.getClient().execute("getDocType", params);
+            final Object[] request = (Object[]) xmlRpcClientLease.get().execute("getDocType", params);
             final DocumentType result;
             if (!"".equals(request[0])) {
                 result = new DocumentTypeImpl((String) request[0], (String) request[1], (String) request[2]);
@@ -379,7 +367,7 @@ public class RemoteXMLResource
             params.add(doctype.getSystemId() == null ? "" : doctype.getSystemId());
 
             try {
-                collection.getClient().execute("setDocType", params);
+                xmlRpcClientLease.get().execute("setDocType", params);
             } catch (final XmlRpcException e) {
                 throw new XMLDBException(ErrorCodes.UNKNOWN_ERROR, e.getMessage(), e);
             }

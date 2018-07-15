@@ -47,6 +47,7 @@ public class Classpath implements Iterable<Path> {
                     }
                 }
             } catch (final InvalidPathException e) {
+                e.printStackTrace();
             }
         }
         return false;
@@ -63,6 +64,7 @@ public class Classpath implements Iterable<Path> {
                     }
                 }
             } catch (final InvalidPathException e) {
+                e.printStackTrace();
             }
         }
         return false;
@@ -124,7 +126,7 @@ public class Classpath implements Iterable<Path> {
     }
 
     /**
-     * Copied from {@link org.exist.util.function.OptionalUtil#or(Optional, Supplier)}
+     * Copied from {@link com.evolvedbinary.j8fu.OptionalUtil#or(Optional, Supplier)}
      * as org.exist.start is compiled into a separate Jar and doesn't have
      * the rest of eXist available on the classpath
      */

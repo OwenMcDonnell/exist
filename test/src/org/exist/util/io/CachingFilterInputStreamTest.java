@@ -1,14 +1,12 @@
 package org.exist.util.io;
 
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.Arrays;
+
+import com.googlecode.junittoolbox.ParallelParameterized;
 import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameter;
 import org.junit.runners.Parameterized.Parameters;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
@@ -27,7 +25,7 @@ import static org.junit.Assert.fail;
  *
  * @author Adam Retter <adam.retter@googlemail.com>
  */
-@RunWith(value = Parameterized.class)
+@RunWith(value = ParallelParameterized.class)
 public class CachingFilterInputStreamTest {
 
     @Parameters(name = "{0}")
@@ -57,7 +55,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -117,7 +115,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
         assertEquals(testData[0], cfis.read());
@@ -134,7 +132,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "he";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -159,7 +157,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -180,7 +178,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "hello";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -211,7 +209,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -279,7 +277,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
         byte result[] = new byte[2];
@@ -298,7 +296,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -319,7 +317,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -351,7 +349,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "hello";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -379,7 +377,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -407,7 +405,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "hello";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -435,7 +433,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -463,7 +461,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -498,7 +496,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -521,7 +519,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -563,7 +561,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -578,7 +576,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -592,7 +590,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
         final FilterInputStreamCache cache = getNewCache(is);
 
         final CachingFilterInputStream cfis1 = new CachingFilterInputStream(cache);
@@ -614,7 +612,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -626,7 +624,7 @@ public class CachingFilterInputStreamTest {
     @Test
     public void available_onEmptyStream() throws IOException, InstantiationException, IllegalAccessException, NoSuchMethodException, IllegalArgumentException, InvocationTargetException {
 
-        InputStream is = new ByteArrayInputStream(new byte[]{});
+        InputStream is = new FastByteArrayInputStream(new byte[]{});
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -640,7 +638,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -653,7 +651,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -670,7 +668,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -693,7 +691,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -720,7 +718,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -743,7 +741,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        InputStream is = new ByteArrayInputStream(testData);
+        InputStream is = new FastByteArrayInputStream(testData);
 
         CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -769,7 +767,7 @@ public class CachingFilterInputStreamTest {
         final String testString = "helloWorld";
         final byte testData[] = testString.getBytes();
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
 
@@ -798,7 +796,7 @@ public class CachingFilterInputStreamTest {
     public void tika116_like() throws IOException, InvocationTargetException, NoSuchMethodException, InstantiationException, IllegalAccessException {
         final byte testData[] = generateRandomBytes(2149);//Files.readAllBytes(Paths.get("/tmp/test2.pdf"));
 
-        final InputStream is = new ByteArrayInputStream(testData);
+        final InputStream is = new FastByteArrayInputStream(testData);
 
         final CachingFilterInputStream cfis = new CachingFilterInputStream(getNewCache(is));
         cfis.mark(0);

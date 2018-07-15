@@ -22,12 +22,13 @@ package org.exist.collections;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.exist.EXistException;
+import org.exist.collections.triggers.TriggerException;
 import org.exist.dom.persistent.DocumentImpl;
 import org.exist.dom.memtree.SAXAdapter;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.*;
 import org.exist.storage.lock.Lock.LockMode;
-import org.exist.storage.lock.Locked;
+import org.exist.storage.lock.ManagedLock;
 import org.exist.storage.txn.TransactionManager;
 import org.exist.storage.txn.Txn;
 import org.exist.util.LockException;
@@ -40,10 +41,12 @@ import org.xml.sax.XMLReader;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
+import java.io.IOException;
 import java.io.StringReader;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.Callable;
+import java.util.concurrent.locks.ReadWriteLock;
 
 /**
  * Manages index configurations. Index configurations are stored in a collection
@@ -58,33 +61,33 @@ public class CollectionConfigurationManager implements BrokerPoolService {
 
     private static final Logger LOG = LogManager.getLogger(CollectionConfigurationManager.class);
 
-    public final static String CONFIG_COLLECTION = XmldbURI.SYSTEM_COLLECTION + "/config";
+    public static final String CONFIG_COLLECTION = XmldbURI.SYSTEM_COLLECTION + "/config";
 
     /** /db/system/config **/
-    public final static XmldbURI CONFIG_COLLECTION_URI = XmldbURI.create(CONFIG_COLLECTION);
+    public static final XmldbURI CONFIG_COLLECTION_URI = XmldbURI.create(CONFIG_COLLECTION);
 
     /** /db/system/config/db **/
-    public final static XmldbURI ROOT_COLLECTION_CONFIG_URI = CONFIG_COLLECTION_URI.append(XmldbURI.ROOT_COLLECTION_NAME);
+    public static final XmldbURI ROOT_COLLECTION_CONFIG_URI = CONFIG_COLLECTION_URI.append(XmldbURI.ROOT_COLLECTION_NAME);
 
-    public final static String COLLECTION_CONFIG_FILENAME = "collection.xconf";
+    public static final String COLLECTION_CONFIG_FILENAME = "collection.xconf";
 
-    public final static CollectionURI COLLECTION_CONFIG_PATH = new CollectionURI(CONFIG_COLLECTION_URI.getRawCollectionPath());
+    public static final CollectionURI COLLECTION_CONFIG_PATH = new CollectionURI(CONFIG_COLLECTION_URI.getRawCollectionPath());
 
-    private Map<CollectionURI, CollectionConfiguration> configurations = new HashMap<CollectionURI, CollectionConfiguration>();
+    private final Map<CollectionURI, CollectionConfiguration> configurations = new HashMap<>();
 
-    private Locked latch = new Locked();
+    private final ReadWriteLock lock = new java.util.concurrent.locks.ReentrantReadWriteLock();
 
-    private CollectionConfiguration defaultConfig;
+    private final CollectionConfiguration defaultConfig;
 
     public CollectionConfigurationManager(final BrokerPool brokerPool) {
         this.defaultConfig = new CollectionConfiguration(brokerPool);
     }
 
     @Override
-    public void startSystem(final DBBroker systemBroker) throws BrokerPoolServiceException {
+    public void startSystem(final DBBroker systemBroker, final Txn transaction) throws BrokerPoolServiceException {
         try {
-            checkCreateCollection(systemBroker, CONFIG_COLLECTION_URI);
-            checkCreateCollection(systemBroker, ROOT_COLLECTION_CONFIG_URI);
+            checkCreateCollection(systemBroker, transaction, CONFIG_COLLECTION_URI);
+            checkCreateCollection(systemBroker, transaction, ROOT_COLLECTION_CONFIG_URI);
             loadAllConfigurations(systemBroker);
             defaultConfig.setIndexConfiguration(systemBroker.getIndexConfiguration());
         } catch(final EXistException | CollectionConfigurationException | PermissionDeniedException | LockException e) {
@@ -106,7 +109,7 @@ public class CollectionConfigurationManager implements BrokerPoolService {
      *            the xconf document as a String.
      * @throws CollectionConfigurationException
      */
-    public void addConfiguration(Txn txn, final DBBroker broker, Collection collection, String config) throws CollectionConfigurationException {
+    public void addConfiguration(final Txn txn, final DBBroker broker, final Collection collection, final String config) throws CollectionConfigurationException {
         try {
             final XmldbURI path = CONFIG_COLLECTION_URI.append(collection.getURI());
 
@@ -117,7 +120,7 @@ public class CollectionConfigurationManager implements BrokerPoolService {
 
             XmldbURI configurationDocumentName = null;
             // Replaces the current configuration file if there is one
-            final CollectionConfiguration conf = getConfiguration(broker, collection);
+            final CollectionConfiguration conf = getConfiguration(collection);
             if (conf != null) {
                 configurationDocumentName = conf.getDocName();
                 if (configurationDocumentName != null) {
@@ -173,40 +176,31 @@ public class CollectionConfigurationManager implements BrokerPoolService {
     }
 
     public List<Object> getCustomIndexSpecs(final String customIndexId) {
-        
-        return latch.read(new Callable<List<Object>>() {
-
-            @Override
-            public List<Object> call() throws Exception {
-
-                List<Object> configs = new ArrayList<Object>(10);
-
-                for (CollectionConfiguration config: configurations.values()) {
-                    IndexSpec spec = config.getIndexConfiguration();
-                    if (spec != null) {
-                        Object customConfig = spec.getCustomIndexSpec(customIndexId);
-                        if (customConfig != null) {
-                            configs.add(customConfig);
-                        }
+        try(final ManagedLock<ReadWriteLock> readLock = ManagedLock.acquire(lock, LockMode.READ_LOCK)) {
+            final List<Object> configs = new ArrayList<>(10);
+            for (final CollectionConfiguration config: configurations.values()) {
+                final IndexSpec spec = config.getIndexConfiguration();
+                if (spec != null) {
+                    final Object customConfig = spec.getCustomIndexSpec(customIndexId);
+                    if (customConfig != null) {
+                        configs.add(customConfig);
                     }
                 }
-
-                return configs;
             }
-        });
+
+            return configs;
+        }
     }
 
     /**
      * Retrieve the collection configuration instance for the given collection.
      * This creates a new CollectionConfiguration object and recursively scans
      * the collection hierarchy for available configurations.
-     * 
-     * @param broker
+     *
      * @param collection
      * @return The collection configuration
-     * @throws CollectionConfigurationException
      */
-    protected CollectionConfiguration getConfiguration(DBBroker broker, Collection collection) throws CollectionConfigurationException {
+    protected CollectionConfiguration getConfiguration(final Collection collection) {
 
         final CollectionURI path = new CollectionURI(COLLECTION_CONFIG_PATH);
         path.append(collection.getURI().getRawCollectionPath());
@@ -216,27 +210,20 @@ public class CollectionConfigurationManager implements BrokerPoolService {
          * way to the end of the path, checking each collection on the way. I
          * modified it to start at the collection path and work its way back to
          * the root, stopping at the first config file it finds. This should be
-         * more efficient, and fit more appropriately will the XmldbURI api
+         * more efficient, and fit more appropriately with the XmldbURI api
          */
-        return latch.read(new Callable<CollectionConfiguration>() {
-
-            @Override
-            public CollectionConfiguration call() throws Exception {
-
-                CollectionConfiguration conf = null;
-
-                while(!path.equals(COLLECTION_CONFIG_PATH)) {
-                    conf = configurations.get(path);
-                    if (conf != null) {
-                        return conf;
-                    }
-                    path.removeLastSegment();
+        try(final ManagedLock<ReadWriteLock> readLock = ManagedLock.acquire(lock, LockMode.READ_LOCK)) {
+            while(!path.equals(COLLECTION_CONFIG_PATH)) {
+                final CollectionConfiguration conf = configurations.get(path);
+                if (conf != null) {
+                    return conf;
                 }
-
-                // use default configuration
-                return defaultConfig;
+                path.removeLastSegment();
             }
-        });
+
+            // use default configuration
+            return defaultConfig;
+        }
     }
 
     protected void loadAllConfigurations(DBBroker broker) throws CollectionConfigurationException, PermissionDeniedException, LockException {
@@ -281,16 +268,10 @@ public class CollectionConfigurationManager implements BrokerPoolService {
                                 + e.getMessage();
                         LOG.error(message);
                     }
-                    
-                    latch.write(new Callable<Void>() {
-                        @Override
-                        public Void call() throws Exception {
 
-                            configurations.put(new CollectionURI(configCollection.getURI().getRawCollectionPath()), conf);
-
-                            return null;
-                        }
-                    });
+                    try(final ManagedLock<ReadWriteLock> writeLock = ManagedLock.acquire(lock, LockMode.WRITE_LOCK)) {
+                        configurations.put(new CollectionURI(configCollection.getURI().getRawCollectionPath()), conf);
+                    }
 
                     // Allow just one configuration document per collection
                     // TODO : do not break if a system property allows several ones -pb
@@ -303,34 +284,25 @@ public class CollectionConfigurationManager implements BrokerPoolService {
     public CollectionConfiguration getOrCreateCollectionConfiguration(final DBBroker broker, Collection collection) {
         final CollectionURI path = new CollectionURI(COLLECTION_CONFIG_PATH);
         path.append(collection.getURI().getRawCollectionPath());
-        
-        CollectionConfiguration conf = latch.read(new Callable<CollectionConfiguration>() {
-            @Override
-            public CollectionConfiguration call() {
-                return configurations.get(path);
-            }
-        });
 
-        if (conf != null) {
-            return conf;
-        }
-        
-        return latch.write(new Callable<CollectionConfiguration>() {
-            @Override
-            public CollectionConfiguration call() {
-                
-                CollectionConfiguration conf = configurations.get(path);
-                
-                if (conf != null) {
-                    return conf;
-                }
-
-                conf = new CollectionConfiguration(broker.getBrokerPool());
-                configurations.put(path, conf);
-
+        try(final ManagedLock<ReadWriteLock> readLock = ManagedLock.acquire(lock, LockMode.READ_LOCK)) {
+            final CollectionConfiguration conf = configurations.get(path);
+            if(conf != null) {
                 return conf;
             }
-        });
+        }
+
+        try(final ManagedLock<ReadWriteLock> writeLock = ManagedLock.acquire(lock, LockMode.WRITE_LOCK)) {
+            CollectionConfiguration conf = configurations.get(path);
+            if (conf != null) {
+                return conf;
+            }
+
+            conf = new CollectionConfiguration(broker.getBrokerPool());
+            configurations.put(path, conf);
+
+            return conf;
+        }
     }
 
     /**
@@ -345,34 +317,29 @@ public class CollectionConfigurationManager implements BrokerPoolService {
         if (!collectionPath.startsWith(CONFIG_COLLECTION_URI)) {
             return;
         }
-        
-        latch.write(new Callable<Void>() {
-            @Override
-            public Void call() {
 
-                if (LOG.isDebugEnabled()) {
-                    LOG.debug("Invalidating collection " + collectionPath + " and subcollections");
-                }
+        try(final ManagedLock<ReadWriteLock> writeLock = ManagedLock.acquire(lock, LockMode.WRITE_LOCK)) {
 
-                CollectionURI uri = new CollectionURI(collectionPath.getRawCollectionPath());
-
-                configurations.remove(uri);
-
-                String str = uri.toString();
-
-                Iterator<Entry<CollectionURI, CollectionConfiguration>> it = configurations.entrySet().iterator();
-
-                while (it.hasNext()) {
-                    Entry<CollectionURI, CollectionConfiguration> entry = it.next();
-
-                    if (entry.getKey().toString().startsWith(str)) {
-                        it.remove();
-                    }
-                }
-
-                return null;
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Invalidating collection " + collectionPath + " and subcollections");
             }
-        });
+
+            CollectionURI uri = new CollectionURI(collectionPath.getRawCollectionPath());
+
+            configurations.remove(uri);
+
+            String str = uri.toString();
+
+            Iterator<Entry<CollectionURI, CollectionConfiguration>> it = configurations.entrySet().iterator();
+
+            while (it.hasNext()) {
+                Entry<CollectionURI, CollectionConfiguration> entry = it.next();
+
+                if (entry.getKey().toString().startsWith(str)) {
+                    it.remove();
+                }
+            }
+        }
     }
 
     /**
@@ -387,18 +354,13 @@ public class CollectionConfigurationManager implements BrokerPoolService {
             return;
         }
 
-        latch.write(new Callable<Void>() {
-            @Override
-            public Void call() {
-
-                if (LOG.isDebugEnabled()) {
-                    LOG.debug("Invalidating collection " + collectionPath);
-                }
-
-                configurations.remove(new CollectionURI(collectionPath.getRawCollectionPath()));
-                return null;
+        try(final ManagedLock<ReadWriteLock> writeLock = ManagedLock.acquire(lock, LockMode.WRITE_LOCK)) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Invalidating collection " + collectionPath);
             }
-        });
+
+            configurations.remove(new CollectionURI(collectionPath.getRawCollectionPath()));
+        }
     }
 
     /**
@@ -409,17 +371,15 @@ public class CollectionConfigurationManager implements BrokerPoolService {
      * @param uri
      * @throws EXistException
      */
-    private void checkCreateCollection(DBBroker broker, XmldbURI uri) throws EXistException {
-        final TransactionManager transact = broker.getDatabase().getTransactionManager();
-        try(final Txn txn = transact.beginTransaction()) {
+    private void checkCreateCollection(final DBBroker broker, final Txn txn, final XmldbURI uri) throws EXistException {
+        try {
             Collection collection = broker.getCollection(uri);
             if (collection == null) {
                 collection = broker.getOrCreateCollection(txn, uri);
                 SanityCheck.THROW_ASSERT(collection != null);
                 broker.saveCollection(txn, collection);
             }
-            transact.commit(txn);
-        } catch (final Exception e) {
+        } catch(final TriggerException | PermissionDeniedException | IOException e) {
             throw new EXistException("Failed to initialize '" + uri + "' : " + e.getMessage());
         }
     }
@@ -444,14 +404,13 @@ public class CollectionConfigurationManager implements BrokerPoolService {
 
         final TransactionManager transact = broker.getDatabase().getTransactionManager();
         try(final Txn txn = transact.beginTransaction()) {
-            Collection collection = null;
-            try {
-                collection = broker.openCollection(XmldbURI.ROOT_COLLECTION_URI, LockMode.READ_LOCK);
+
+            try(final Collection collection = broker.openCollection(XmldbURI.ROOT_COLLECTION_URI, LockMode.READ_LOCK)) {
                 if (collection == null) {
                     transact.abort(txn);
                     throw new EXistException("collection " + XmldbURI.ROOT_COLLECTION_URI + " not found!");
                 }
-                final CollectionConfiguration conf = getConfiguration(broker, collection);
+                final CollectionConfiguration conf = getConfiguration(collection);
                 if (conf != null) {
                     // We already have a configuration document : do not erase
                     // it
@@ -460,15 +419,14 @@ public class CollectionConfigurationManager implements BrokerPoolService {
                         return;
                     }
                 }
-            } finally {
-                if (collection != null) {
-                    collection.release(LockMode.READ_LOCK);
-                }
+
+                // Configure the root collection
+                addConfiguration(txn, broker, collection, configuration);
+                LOG.info("Configured '" + collection.getURI() + "'");
             }
-            // Configure the root collection
-            addConfiguration(txn, broker, collection, configuration);
+
             transact.commit(txn);
-            LOG.info("Configured '" + collection.getURI() + "'");
+
         } catch (final CollectionConfigurationException e) {
             throw new EXistException(e.getMessage());
         }

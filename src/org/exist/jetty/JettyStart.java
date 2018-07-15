@@ -101,6 +101,10 @@ public class JettyStart extends Observable implements LifeCycle.Listener {
     }
 
     public synchronized void run() {
+        run(true);
+    }
+
+    public synchronized void run(final boolean standalone) {
         final String jettyProperty = Optional.ofNullable(System.getProperty(JETTY_HOME_PROP))
                 .orElseGet(() -> {
                     final Optional<Path> home = ConfigurationHelper.getExistHome();
@@ -110,8 +114,13 @@ public class JettyStart extends Observable implements LifeCycle.Listener {
                     return jettyPath;
                 });
 
-        final Path standaloneFile = Paths.get(jettyProperty).resolve("etc").resolve(Main.STANDALONE_ENABLED_JETTY_CONFIGS);
-        run(new String[] { standaloneFile.toAbsolutePath().toString() }, null);
+        final Path jettyConfig;
+        if (standalone) {
+            jettyConfig = Paths.get(jettyProperty).resolve("etc").resolve(Main.STANDALONE_ENABLED_JETTY_CONFIGS);
+        } else {
+            jettyConfig = Paths.get(jettyProperty).resolve("etc").resolve(Main.STANDARD_ENABLED_JETTY_CONFIGS);
+        }
+        run(new String[] { jettyConfig.toAbsolutePath().toString() }, null);
     }
     
     public synchronized void run(final String[] args, final Observer observer) {
@@ -369,27 +378,29 @@ public class JettyStart extends Observable implements LifeCycle.Listener {
 
     private static String getJettyVersion(final String jettyBase) {
         final Path jettyLib = Paths.get(jettyBase, "lib");
-        try(final Stream<Path> children = Files.list(jettyLib)) {
-            final Optional<Path> jettyServerJar = children.filter(child -> {
-                final String fileName = FileUtils.fileName(child);
-                return fileName.startsWith("jetty-server") && fileName.endsWith(".jar");
-            }).findFirst();
+        if(Files.exists(jettyLib)) {
+            try (final Stream<Path> children = Files.list(jettyLib)) {
+                final Optional<Path> jettyServerJar = children.filter(child -> {
+                    final String fileName = FileUtils.fileName(child);
+                    return fileName.startsWith("jetty-server") && fileName.endsWith(".jar");
+                }).findFirst();
 
-            if(jettyServerJar.isPresent()) {
-                final JarFile jarFile = new JarFile(jettyServerJar.get().toFile());
-                final Manifest manifest = jarFile.getManifest();
-                if(manifest != null) {
-                    final Attributes mainAttributes = manifest.getMainAttributes();
-                    if(mainAttributes != null) {
-                        final String jettyVersion = mainAttributes.getValue(Attributes.Name.IMPLEMENTATION_VERSION);
-                        if(jettyVersion != null) {
-                            return jettyVersion;
+                if (jettyServerJar.isPresent()) {
+                    final JarFile jarFile = new JarFile(jettyServerJar.get().toFile());
+                    final Manifest manifest = jarFile.getManifest();
+                    if (manifest != null) {
+                        final Attributes mainAttributes = manifest.getMainAttributes();
+                        if (mainAttributes != null) {
+                            final String jettyVersion = mainAttributes.getValue(Attributes.Name.IMPLEMENTATION_VERSION);
+                            if (jettyVersion != null) {
+                                return jettyVersion;
+                            }
                         }
                     }
                 }
+            } catch (final IOException ioe) {
+                logger.error(ioe.getMessage(), ioe);
             }
-        } catch (final IOException ioe) {
-            logger.error(ioe.getMessage(), ioe);
         }
 
         return "<UNKNOWN>";
@@ -608,7 +619,7 @@ public class JettyStart extends Observable implements LifeCycle.Listener {
         private final Server server;
 
         BrokerPoolAndJettyShutdownHook(final Server server) {
-            super("JettyStart-ShutdownHook");
+            super("exist-jettyStart-shutdownHook");
             this.server = server;
         }
 

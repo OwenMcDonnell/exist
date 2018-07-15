@@ -22,9 +22,7 @@
  */
 package org.exist.xquery;
 
-import java.io.ByteArrayInputStream;
 import java.net.URISyntaxException;
-import java.util.Iterator;
 import java.util.List;
 
 import org.exist.dom.persistent.AVLTreeNodeSet;
@@ -36,12 +34,14 @@ import org.exist.dom.memtree.NodeImpl;
 import org.exist.numbering.NodeId;
 import org.exist.security.PermissionDeniedException;
 import org.exist.storage.DBBroker;
+import org.exist.util.io.FastByteArrayInputStream;
 import org.exist.util.serializer.DOMStreamer;
 import org.exist.util.serializer.SerializerPool;
 import org.exist.xmldb.LocalXMLResource;
 import org.exist.xmldb.RemoteXMLResource;
 import org.exist.xmldb.XmldbURI;
 import org.exist.xquery.value.*;
+import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
@@ -91,7 +91,7 @@ public class XPathUtil {
         } else if (obj instanceof Long) {
             return new IntegerValue(((Long) obj), Type.LONG);
         } else if (obj instanceof byte[]) {
-            return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), new ByteArrayInputStream((byte[]) obj));
+            return BinaryValueFromInputStream.getInstance(context, new Base64BinaryValueType(), new FastByteArrayInputStream((byte[]) obj));
 
         } else if (obj instanceof ResourceSet) {
             final Sequence seq = new AVLTreeNodeSet();
@@ -116,7 +116,11 @@ public class XPathUtil {
                 final DocumentBuilderReceiver receiver = new DocumentBuilderReceiver(builder);
                 streamer.setContentHandler(receiver);
                 streamer.serialize((Node) obj, false);
-                return builder.getDocument().getNode(1);
+                if(obj instanceof Document) {
+                    return builder.getDocument();
+                } else {
+                    return builder.getDocument().getNode(1);
+                }
             } catch (final SAXException e) {
                 throw new XPathException(
                         "Failed to transform node into internal model: "

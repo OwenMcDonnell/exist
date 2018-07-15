@@ -17,7 +17,7 @@
     <property name="app.resources" value="${app.dir}/Contents/Resources"/>
     <property name="app.exist" value="${app.resources}/eXist-db"/>
     <property name="app.icon" value="installer/scripts/icon.icns"/>
-    <property name="appbundler.jar" value="${tools.appbundler}/lib/appbundler-20170504.jar"/>
+    <property name="appbundler.jar" value="${tools.appbundler}/lib/appbundler-20180114.jar"/>
 
     <condition property="isMacOS">
         <and>
@@ -230,6 +230,8 @@
         <!-- Create a temporary Disk Image (Mac) -->
         <exec executable="/usr/bin/hdiutil" os="Mac OS X" failonerror="true">
             <arg value="create"/>
+            <arg value="-fs"/>
+            <arg value="HFS+"/>
             <arg value="-srcfolder"/>
             <arg value="${app.dir}"/>
             <arg value="-volname"/>
@@ -272,9 +274,7 @@
             <arg value="count=${dmg.size}"/>
         </exec>
 
-        <exec executable="/sbin/mkfs" os="Linux" failonerror="true">
-            <arg value="-t"/>
-            <arg value="hfsplus"/>
+	<exec executable="/sbin/mkfs.hfsplus" os="Linux" failonerror="true">
             <arg value="-v"/>
             <arg value="${app.name}"/>
             <arg value="${dist}/${app.name}-tmp.dmg"/>
@@ -320,7 +320,7 @@
         </exec>
 
         <!-- Add a symbolic link to the Applications directory -->
-        <symlink link="${app.dest}" resource="/Applications"/>
+        <symlink link="${app.dest}/Applications" resource="/Applications"/>
 
         <!-- Detach the temporary image (Mac) -->
         <exec executable="/usr/bin/hdiutil" os="Mac OS X" failonerror="true">

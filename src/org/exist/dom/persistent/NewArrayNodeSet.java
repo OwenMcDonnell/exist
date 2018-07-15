@@ -22,10 +22,11 @@
 package org.exist.dom.persistent;
 
 import org.exist.collections.Collection;
+import org.exist.collections.ManagedLocks;
 import org.exist.numbering.NodeId;
 import org.exist.storage.DBBroker;
-import org.exist.storage.lock.Lock;
-import org.exist.storage.lock.Lock.LockMode;
+import org.exist.storage.lock.LockManager;
+import org.exist.storage.lock.ManagedDocumentLock;
 import org.exist.util.FastQSort;
 import org.exist.util.LockException;
 import org.exist.xmldb.XmldbURI;
@@ -37,11 +38,7 @@ import org.exist.xquery.value.SequenceIterator;
 import org.exist.xquery.value.Type;
 import org.w3c.dom.Node;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Set;
-import java.util.NoSuchElementException;
+import java.util.*;
 
 /**
  * A fast node set implementation, based on arrays to store nodes and documents.
@@ -1049,27 +1046,26 @@ public class NewArrayNodeSet extends AbstractArrayNodeSet implements ExtNodeSet,
     }
 
     @Override
-    public void lock(final DBBroker broker, final boolean exclusive, final boolean checkExisting) throws LockException {
+    public ManagedLocks<ManagedDocumentLock> lock(final DBBroker broker, final boolean exclusive) throws LockException {
         sort();
-        for(int idx = 0; idx < documentCount; idx++) {
-            final DocumentImpl doc = nodes[documentOffsets[idx]].getOwnerDocument();
-            final Lock docLock = doc.getUpdateLock();
-            docLock.acquire(exclusive ? LockMode.WRITE_LOCK : LockMode.READ_LOCK);
-        }
-    }
-
-    @Override
-    public void unlock(final boolean exclusive) {
-        sort();
-        final Thread thread = Thread.currentThread();
-        for(int idx = 0; idx < documentCount; idx++) {
-            final DocumentImpl doc = nodes[documentOffsets[idx]].getOwnerDocument();
-            final Lock docLock = doc.getUpdateLock();
-            if(exclusive) {
-                docLock.release(LockMode.WRITE_LOCK);
-            } else if(docLock.isLockedForRead(thread)) {
-                docLock.release(LockMode.READ_LOCK);
+        final LockManager lockManager = broker.getBrokerPool().getLockManager();
+        final ManagedDocumentLock[] managedDocumentLocks = new ManagedDocumentLock[documentCount];
+        try {
+            for (int idx = 0; idx < documentCount; idx++) {
+                final DocumentImpl doc = nodes[documentOffsets[idx]].getOwnerDocument();
+                final ManagedDocumentLock managedDocumentLock;
+                if (exclusive) {
+                    managedDocumentLock = lockManager.acquireDocumentWriteLock(doc.getURI());
+                } else {
+                    managedDocumentLock = lockManager.acquireDocumentReadLock(doc.getURI());
+                }
+                managedDocumentLocks[idx] = managedDocumentLock;
             }
+            return new ManagedLocks<>(managedDocumentLocks);
+        } catch (final LockException e) {
+            // unlock any previously locked documents
+            new ManagedLocks<>(managedDocumentLocks).close();
+            throw e;
         }
     }
 

@@ -350,7 +350,7 @@ public class CollectionConfigurationTest {
        Collection testCollection = DatabaseManager.getCollection(ROOT_URI + "/" + TEST_COLLECTION);
 
        //Configure collection *manually*
-       XmldbURI configurationFileName = XmldbURI.create("foo" + CollectionConfiguration.COLLECTION_CONFIG_SUFFIX);
+       XmldbURI configurationFileName = XmldbURI.create(CollectionConfiguration.DEFAULT_COLLECTION_CONFIG_FILE);
        storeConfiguration(CONF_COLL_URI, configurationFileName, CONFIG1);
 
        // ... then configure collection automatically
@@ -399,7 +399,7 @@ public class CollectionConfigurationTest {
        testCollection.storeResource(doc);
 
        //... then configure collection *manually*
-       XmldbURI configurationFileName = XmldbURI.create("foo" + CollectionConfiguration.COLLECTION_CONFIG_SUFFIX);
+       XmldbURI configurationFileName = XmldbURI.create(CollectionConfiguration.DEFAULT_COLLECTION_CONFIG_FILE);
        storeConfiguration(CONF_COLL_URI, configurationFileName, CONFIG1);
 
        //... then configure collection automatically
@@ -988,7 +988,7 @@ public class CollectionConfigurationTest {
         doc.setContent(DOCUMENT_CONTENT3);
         testCollection.storeResource(doc);
 
-        XQueryService service = (XQueryService) testCollection.getService("XQueryService", "1.0");
+        EXistXQueryService service = (EXistXQueryService) testCollection.getService("XQueryService", "1.0");
         // the query optimizer cannot optimize the following general comparison as
         // the context qname is unknown. however, the available qname index should still be used.
         ResourceSet result = service.query("(# exist:force-index-use #) { for $t in /test/a where $t = 1 return $t}");

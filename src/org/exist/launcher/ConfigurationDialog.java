@@ -14,14 +14,13 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.swing.*;
-import javax.xml.stream.XMLStreamException;
 import javax.xml.transform.TransformerException;
 
 import org.apache.commons.configuration2.PropertiesConfiguration;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 import org.apache.commons.lang3.SystemUtils;
+import org.exist.collections.CollectionCache;
 import org.exist.storage.BrokerPool;
-import org.exist.storage.CollectionCacheManager;
 import org.exist.storage.DefaultCacheManager;
 import org.exist.util.Configuration;
 import org.exist.util.ConfigurationHelper;
@@ -64,7 +63,7 @@ public class ConfigurationDialog extends JDialog {
             final int cacheSizeProp = existConfig.getInteger(DefaultCacheManager.PROPERTY_CACHE_SIZE);
             cacheSize.setValue(Integer.valueOf(cacheSizeProp));
             
-            final int collectionCacheProp = existConfig.getInteger(CollectionCacheManager.PROPERTY_CACHE_SIZE_BYTES);
+            final int collectionCacheProp = existConfig.getInteger(CollectionCache.PROPERTY_CACHE_SIZE_BYTES);
             collectionCache.setValue(Integer.valueOf(collectionCacheProp / 1024 / 1024)); // show in MB
 
             final Path dir = (Path)existConfig.getProperty(BrokerPool.PROPERTY_DATA_DIR);
@@ -598,11 +597,11 @@ public class ConfigurationDialog extends JDialog {
             maxCache = (max / 2);
         }
         cacheModel.setMaximum(maxCache - 48);
-        if (cacheModel.getMaximum().compareTo(cacheModel.getValue()) < 0) {
+        if (((Integer)cacheModel.getMaximum()).compareTo((Integer)cacheModel.getValue()) < 0) {
             cacheModel.setValue(cacheModel.getMaximum());
         }
         collectionCacheModel.setMaximum(maxCache - (Integer)cacheModel.getValue());
-        if (collectionCacheModel.getMaximum().compareTo(collectionCacheModel.getValue()) < 0) {
+        if (((Integer)collectionCacheModel.getMaximum()).compareTo((Integer)collectionCacheModel.getValue()) < 0) {
             collectionCacheModel.setValue(collectionCacheModel.getMaximum());
         }
     }

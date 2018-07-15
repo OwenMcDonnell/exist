@@ -19,12 +19,16 @@
  */
 package org.exist.xmldb;
 
+import org.apache.commons.io.output.CountingOutputStream;
+import org.apache.commons.io.output.NullOutputStream;
 import org.exist.dom.persistent.BinaryDocument;
-import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.exist.security.Subject;
 import org.exist.storage.BrokerPool;
 import org.exist.util.EXistInputSource;
 import org.exist.util.FileUtils;
+import org.exist.util.io.FastByteArrayInputStream;
+import org.exist.util.io.FastByteArrayOutputStream;
+import org.exist.xquery.value.BinaryValue;
 import org.w3c.dom.DocumentType;
 import org.xml.sax.InputSource;
 import org.xml.sax.ext.LexicalHandler;
@@ -32,20 +36,25 @@ import org.xmldb.api.base.ErrorCodes;
 import org.xmldb.api.base.XMLDBException;
 import org.xmldb.api.modules.BinaryResource;
 
+import javax.annotation.Nullable;
 import java.io.BufferedOutputStream;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.FileOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Properties;
+import org.exist.storage.DBBroker;
+import org.exist.storage.txn.Txn;
+import com.evolvedbinary.j8fu.function.SupplierE;
 
 public class LocalBinaryResource extends AbstractEXistResource implements ExtendedResource, BinaryResource, EXistResource {
 
     protected InputSource inputSource = null;
     protected Path file = null;
     protected byte[] rawData = null;
+    private BinaryValue binaryValue = null;
     private boolean isExternal = false;
 
     public LocalBinaryResource(final Subject user, final BrokerPool brokerPool, final LocalCollection collection, final XmldbURI docId) {
@@ -59,26 +68,67 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
 
     @Override
     public Object getExtendedContent() throws XMLDBException {
+        return getExtendedContent(() -> read((document, broker, transaction) -> broker.getBinaryResource(((BinaryDocument) document))));
+    }
+
+    /**
+     * Similar to {@link org.exist.xmldb.ExtendedResource#getExtendedContent()}
+     * but useful for operations within the XML:DB Local API
+     * that are already working within a transaction
+     */
+    Object getExtendedContent(final DBBroker broker, final Txn transaction) throws XMLDBException {
+        return getExtendedContent(() -> read(broker, transaction).apply((document, broker1, transaction1) -> broker1.getBinaryResource(((BinaryDocument) document))));
+    }
+
+    private Object getExtendedContent(final SupplierE<Object, XMLDBException> binaryResourceRead) throws XMLDBException {
         if (file != null) {
             return file;
         }
         if (inputSource != null) {
             return inputSource;
         }
-
-        return read((document, broker, transaction) -> broker.getBinaryResource(((BinaryDocument) document)));
+        if (rawData != null) {
+            return rawData;
+        }
+        if(binaryValue != null) {
+            return binaryValue;
+        }
+        return binaryResourceRead.get();
     }
 
     @Override
     public Object getContent() throws XMLDBException {
         final Object res = getExtendedContent();
+        return getContent(res);
+    }
+
+    /**
+     * Similar to {@link org.exist.xmldb.LocalBinaryResource#getContent()}
+     * but useful for operations within the XML:DB Local API
+     * that are already working within a transaction
+     */
+    Object getContent(final DBBroker broker, final Txn transaction) throws XMLDBException {
+        final Object res = getExtendedContent(broker, transaction);
+        return getContent(res);
+    }
+
+    private Object getContent(final Object res) throws XMLDBException {
         if(res != null) {
             if(res instanceof Path) {
                 return readFile((Path)res);
             } else if(res instanceof java.io.File) {
                 return readFile(((java.io.File)res).toPath());
             } else if(res instanceof InputSource) {
-                return readFile((InputSource)res);
+                return readFile((InputSource) res);
+            } else if(res instanceof byte[]) {
+                return res;
+            } else if(res instanceof BinaryValue) {
+                try(final FastByteArrayOutputStream baos = new FastByteArrayOutputStream()) {
+                    ((BinaryValue) res).streamBinaryTo(baos);
+                    return baos.toByteArray();
+                } catch (final IOException e) {
+                    throw new XMLDBException(ErrorCodes.UNKNOWN_ERROR, e.getMessage(), e);
+                }
             } else if(res instanceof InputStream) {
                 try(final InputStream is = (InputStream)res) {
                     return readFile(is);
@@ -87,7 +137,6 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
                 }
             }
         }
-
         return res;
     }
 
@@ -102,32 +151,50 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
         } else if(value instanceof byte[]) {
             rawData = (byte[])value;
         } else if(value instanceof String) {
-            rawData = ((String)value).getBytes();
+            rawData = ((String) value).getBytes();
+        } else if(value instanceof BinaryValue) {
+            binaryValue = (BinaryValue)value;
         } else {
             throw new XMLDBException(ErrorCodes.VENDOR_ERROR, "don't know how to handle value of type " + value.getClass().getName());
         }
+
         isExternal = true;
     }
 
     @Override
     public InputStream getStreamContent() throws XMLDBException {
-        final InputStream retval;
+        return getStreamContent(() -> read((document, broker, transaction) -> broker.getBinaryResource(((BinaryDocument) document))));
+    }
+
+    /**
+     * Similar to {@link org.exist.xmldb.LocalBinaryResource#getStreamContent()}
+     * but useful for operations within the XML:DB Local API
+     * that are already working within a transaction
+     */
+    InputStream getStreamContent(final DBBroker broker, final Txn transaction) throws XMLDBException {
+        return getStreamContent(() -> this.<InputStream>read(broker, transaction).apply((document, broker1, transaction1) -> broker.getBinaryResource(((BinaryDocument) document))));
+    }
+
+    private InputStream getStreamContent(final SupplierE<InputStream, XMLDBException> streamContentRead) throws XMLDBException {
+        final InputStream is;
         if(file != null) {
             try {
-                retval = Files.newInputStream(file);
-            } catch(final IOException fnfe) {
+                is = Files.newInputStream(file);
+            } catch(final IOException e) {
                 // Cannot fire it :-(
-                throw new XMLDBException(ErrorCodes.VENDOR_ERROR, fnfe.getMessage(), fnfe);
+                throw new XMLDBException(ErrorCodes.VENDOR_ERROR, e.getMessage(), e);
             }
         } else if(inputSource != null) {
-            retval = inputSource.getByteStream();
+            is = inputSource.getByteStream();
         } else if(rawData != null) {
-            retval = new ByteArrayInputStream(rawData);
+            is = new FastByteArrayInputStream(rawData);
+        } else if(binaryValue != null) {
+            is = binaryValue.getInputStream();
         } else {
-            retval = read((document, broker, transaction) -> broker.getBinaryResource(((BinaryDocument) document)));
+            is = streamContentRead.get();
         }
 
-        return retval;
+        return is;
     }
 
     @Override
@@ -152,13 +219,6 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
             return null;
         });
     }
-	
-    @Override
-    public void freeResources() {
-        if(!isExternal && file != null) {
-            file = null;
-        }
-    }
 
     @Override
     public long getStreamLength() throws XMLDBException {
@@ -170,6 +230,13 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
             retval = ((EXistInputSource)inputSource).getByteStreamLength();
         } else if(rawData != null) {
             retval = rawData.length;
+        } else if(binaryValue != null) {
+            try(final CountingOutputStream os = new CountingOutputStream(new NullOutputStream())) {
+                binaryValue.streamBinaryTo(os);
+                retval = os.getByteCount();
+            } catch(final IOException e) {
+                throw new XMLDBException(ErrorCodes.VENDOR_ERROR, "error while obtaining length of binary value " + getId(), e);
+            }
         } else {
             retval = getContentLength();
         }
@@ -178,9 +245,8 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
     }
 	
     private byte[] readFile(final Path file) throws XMLDBException {
-        try(final ByteArrayOutputStream os = new ByteArrayOutputStream()) {
-            Files.copy(file, os);
-            return os.toByteArray();
+        try {
+            return Files.readAllBytes(file);
         } catch (final IOException e) {
             throw new XMLDBException(ErrorCodes.VENDOR_ERROR, "file " + file.toAbsolutePath() + " could not be found", e);
         }
@@ -195,12 +261,8 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
     }
 
     private byte[] readFile(final InputStream is) throws XMLDBException {
-        try(final ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-            final byte[] buf = new byte[2048];
-            int read = -1;
-            while((read = is.read(buf)) > -1) {
-                bos.write(buf, 0, read);
-            }
+        try(final FastByteArrayOutputStream bos = new FastByteArrayOutputStream()) {
+            bos.write(is);
             return bos.toByteArray();
         } catch (final IOException e) {
             throw new XMLDBException(ErrorCodes.VENDOR_ERROR, "IO exception while reading file " + file.toAbsolutePath(), e);
@@ -219,5 +281,29 @@ public class LocalBinaryResource extends AbstractEXistResource implements Extend
     @Override
     public void setLexicalHandler(final LexicalHandler handler) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setProperties(final Properties properties) {
+    }
+
+    @Override
+    @Nullable public Properties getProperties() {
+        return null;
+    }
+
+    @Override
+    protected void doClose() throws XMLDBException {
+        if(!isExternal && file != null) {
+            file = null;
+        }
+
+        if(binaryValue != null) {
+            try {
+                binaryValue.close();
+            } catch(final IOException e) {
+                throw new XMLDBException(ErrorCodes.VENDOR_ERROR, "error while closing binary resource " + getId(), e);
+            }
+        }
     }
 }

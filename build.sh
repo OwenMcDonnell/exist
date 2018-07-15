@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # $Id$
 
 JAVA_RUN="$JAVA_HOME/bin/java"
@@ -30,16 +30,14 @@ fi
 
 ANT_HOME="$EXIST_HOME/tools/ant"
 
-LOCALCLASSPATH="$ANT_HOME/lib/ant-launcher-1.10.1.jar"
-
-JAVA_ENDORSED_DIRS="$EXIST_HOME"/lib/endorsed
+LOCALCLASSPATH="$ANT_HOME/lib/ant-launcher-1.10.2.jar"
 
 # You must set
 # -Djavax.xml.transform.TransformerFactory=org.apache.xalan.processor.TransformerFactoryImpl
 # Otherwise Ant will fail to do junitreport with Saxon, as it has a direct dependency on Xalan.
 # This is also true for installer target which uses {http://exslt.org/strings}tokenize(). /ljo
 
-JAVA_OPTS="-Dant.home=$ANT_HOME -Dant.library.dir=$ANT_HOME/lib -Djava.endorsed.dirs=$JAVA_ENDORSED_DIRS -Dexist.home=$EXIST_HOME -Djavax.xml.transform.TransformerFactory=org.apache.xalan.processor.TransformerFactoryImpl $JAVA_OPTS"
+JAVA_OPTS="-Dant.home=$ANT_HOME -Dant.library.dir=$ANT_HOME/lib -Dexist.home=$EXIST_HOME -Djavax.xml.transform.TransformerFactory=org.apache.xalan.processor.TransformerFactoryImpl $JAVA_OPTS"
 
 echo Starting Ant...
 echo
