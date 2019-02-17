@@ -1,7 +1,8 @@
 # Alphabetical order
 .exist_history
 .exist_query_history
-.idea/workspace.xml
+.idea/
+*.iml
 target/
 autodeploy/
 /backup/
