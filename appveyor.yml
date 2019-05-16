@@ -15,11 +15,11 @@ environment:
      # JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
 
 build_script:
-  - cmd: mvn -T 1C -DskipTests=true -Dmaven.javadoc.skip=true -Ddocker=false install -B -V -q
+  - cmd: mvn -T 2C -DskipTests=true -Dmaven.javadoc.skip=true -Ddocker=false install -B -V -q
   - sh: mvn -T 2C -DskipTests=true -Dmaven.javadoc.skip=true -Ddocker=true install -B -V
 
 test_script:
-  - cmd: mvn -T 1C -Ddocker=false test -B -q
+  - cmd: mvn -T 2C -Ddocker=false test -B -q
   - sh: mvn -T 2C -Ddocker=true test -B
 
 after_test:
