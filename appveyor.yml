@@ -1,10 +1,14 @@
 version: '{branch}-{build}'
 
 init:
-  - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+ # - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+ - ps: Write-host "`nCheck number of logical CPUs" -foregroundcolor green
+ - ps: gcim Win32_Processor | % { "$($_.NumberOfLogicalProcessors) logical CPUs" }
+
+ - ps: Write-host "`nCheck memory size" -foregroundcolor green
+ - ps: gcim Win32_OperatingSystem | % { "$([int]($_.TotalVisibleMemorySize/1mb)) Gb" }
   
 environment:
-  APPVEYOR_SAVE_CACHE_ON_ERROR: true
   matrix:
     - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
       JAVA_HOME: C:\Program Files\Java\jdk1.8.0
@@ -16,11 +20,11 @@ environment:
      # JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
 
 build_script:
-  - cmd: mvn -DskipTests=true -Dmaven.javadoc.skip=true -Ddocker=false install -B -V -q
+  - cmd: mvn -T 2C -DskipTests=true -Dmaven.javadoc.skip=true -Ddocker=false install -B -V -q
   - sh: mvn -T 2C -DskipTests=true -Dmaven.javadoc.skip=true -Ddocker=true install -B -V
 
 test_script:
-  - cmd: mvn -Ddocker=false test -B -q
+  - cmd: mvn -T 2C -Ddocker=false test -B -q
   - sh: mvn -T 2C -Ddocker=true test -B
 
 after_test:
@@ -29,7 +33,6 @@ after_test:
       foreach ($file in Get-ChildItem -Path "$($env:APPVEYOR_BUILD_FOLDER)\exist-core\target\surefire-reports\" -Filter *.xml) {
         $wc.UploadFile("https://ci.appveyor.com/api/testresults/junit/$($env:APPVEYOR_JOB_ID)", $file.FullName)
       }
-
 on_failure:
   - cmd: 7z a surefire-failed-data.zip %APPVEYOR_BUILD_FOLDER%\exist-core\target\surefire-reports\ && appveyor PushArtifact surefire-failed-data.zip
   - sh: tar czvf surefire-failed-data.tgz $APPVEYOR_BUILD_FOLDER/exist-core/target/surefire-reports/ && appveyor PushArtifact surefire-failed-data.tgz
@@ -46,3 +49,4 @@ cache:
 
 #on_finish:
  # - ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+
